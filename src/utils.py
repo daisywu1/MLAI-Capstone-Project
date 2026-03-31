@@ -1,0 +1,54 @@
+"""Shared utility functions for the capstone project."""
+
+import os
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
+RAW_DIR = os.path.join(DATA_DIR, 'raw')
+PROCESSED_DIR = os.path.join(DATA_DIR, 'processed')
+IMAGES_DIR = os.path.join(PROJECT_ROOT, 'images')
+MODELS_DIR = os.path.join(PROJECT_ROOT, 'models')
+
+for d in [RAW_DIR, PROCESSED_DIR, IMAGES_DIR, MODELS_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+
+def print_section(title: str):
+    """Print a formatted section header."""
+    print(f"\n{'='*60}")
+    print(f"  {title}")
+    print(f"{'='*60}\n")
+
+
+def load_processed_data(filename: str) -> pd.DataFrame:
+    """Load a previously saved processed dataset."""
+    path = os.path.join(PROCESSED_DIR, filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Processed file not found: {path}")
+    return pd.read_parquet(path)
+
+
+def prepare_train_test(df_features: pd.DataFrame, test_size=0.2, random_state=42):
+    """Split feature matrix into train/test sets with scaling.
+
+    Returns (X_train, X_test, y_train, y_test, scaler, feature_names).
+    """
+    from src.feature_engineering import TARGET_COLUMN
+
+    feature_cols = [c for c in df_features.columns if c != TARGET_COLUMN]
+    X = df_features[feature_cols].values
+    y = df_features[TARGET_COLUMN].values
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
+    return X_train, X_test, y_train, y_test, scaler, feature_cols
