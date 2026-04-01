@@ -101,9 +101,13 @@ def load_auth_data_sampled(target_rows: int = 1_000_000,
 
     # Pre-load red team labels to ensure we don't drop them during sampling
     redteam = load_redteam_labels()
+    
+    # Create a fast lookup set of composite string keys
     redteam_keys = set(
-        zip(redteam['time'], redteam['src_user_domain'],
-            redteam['src_computer'], redteam['dst_computer'])
+        redteam['time'].astype(str) + '|' + 
+        redteam['src_user_domain'] + '|' + 
+        redteam['src_computer'] + '|' + 
+        redteam['dst_computer']
     )
 
     reader = pd.read_csv(
@@ -115,12 +119,15 @@ def load_auth_data_sampled(target_rows: int = 1_000_000,
     )
 
     for i, chunk in enumerate(reader):
-        # 1. Identify and keep all red team events in this chunk
-        is_red = chunk.apply(
-            lambda r: (r['time'], r['src_user_domain'],
-                       r['src_computer'], r['dst_computer']) in redteam_keys,
-            axis=1
+        # 1. Fast vectorized identification of red team events
+        chunk_keys = (
+            chunk['time'].astype(str) + '|' + 
+            chunk['src_user_domain'] + '|' + 
+            chunk['src_computer'] + '|' + 
+            chunk['dst_computer']
         )
+        is_red = chunk_keys.isin(redteam_keys)
+        
         red_chunk = chunk[is_red]
 
         # 2. Sample from the normal events
@@ -137,18 +144,18 @@ def load_auth_data_sampled(target_rows: int = 1_000_000,
             print(f"  ... processed {(i+1)*chunk_size/1e6:.0f}M rows, "
                   f"collected {rows_collected:,} so far")
 
-        if rows_collected >= target_rows * 1.1:
-            break
-
     df = pd.concat(chunks, ignore_index=True).sort_values('time').reset_index(drop=True)
 
     # If we overshot the target, downsample the normal events again, keeping all red team events
     if len(df) > target_rows:
-        is_red_final = df.apply(
-            lambda r: (r['time'], r['src_user_domain'],
-                       r['src_computer'], r['dst_computer']) in redteam_keys,
-            axis=1
+        df_keys = (
+            df['time'].astype(str) + '|' + 
+            df['src_user_domain'] + '|' + 
+            df['src_computer'] + '|' + 
+            df['dst_computer']
         )
+        is_red_final = df_keys.isin(redteam_keys)
+        
         df_red = df[is_red_final]
         df_normal = df[~is_red_final]
 
@@ -217,15 +224,20 @@ def label_redteam_events(df: pd.DataFrame, redteam: pd.DataFrame) -> pd.DataFram
     df = df.copy()
 
     redteam_keys = set(
-        zip(redteam['time'], redteam['src_user_domain'],
-            redteam['src_computer'], redteam['dst_computer'])
+        redteam['time'].astype(str) + '|' + 
+        redteam['src_user_domain'] + '|' + 
+        redteam['src_computer'] + '|' + 
+        redteam['dst_computer']
     )
 
-    df['is_suspicious'] = df.apply(
-        lambda r: 1 if (r['time'], r['src_user_domain'],
-                        r['src_computer'], r['dst_computer']) in redteam_keys
-        else 0, axis=1
+    df_keys = (
+        df['time'].astype(str) + '|' + 
+        df['src_user_domain'] + '|' + 
+        df['src_computer'] + '|' + 
+        df['dst_computer']
     )
+    
+    df['is_suspicious'] = df_keys.isin(redteam_keys).astype(int)
 
     n_sus = df['is_suspicious'].sum()
     print(f"  Labeled {n_sus:,} suspicious events "

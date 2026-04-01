@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.tree import DecisionTreeClassifier, export_text, plot_tree
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 from src.utils import IMAGES_DIR
 
 
@@ -15,22 +15,36 @@ def _save_fig(name: str):
     print(f"  Saved: {path}")
 
 
-def tune_tree_depth(X_train, y_train, max_depth_range=range(2, 16)):
+def tune_tree_depth(X_train, y_train, max_depth_range=range(2, 16), cv=5):
     """Find optimal max_depth via cross-validation.
 
     Returns (best_depth, results_df).
     """
     results = []
+    n_positive = int(y_train.sum())
+    if n_positive < cv:
+        cv = max(2, n_positive)
+        
+    cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42) if cv >= 2 else None
+
     for depth in max_depth_range:
-        dt = DecisionTreeClassifier(max_depth=depth, random_state=42)
-        scores = cross_val_score(dt, X_train, y_train, cv=5,
-                                 scoring='roc_auc', n_jobs=-1)
-        results.append({
-            'max_depth': depth,
-            'Mean AUC': scores.mean(),
-            'Std AUC': scores.std()
-        })
-        print(f"  depth={depth}: AUC = {scores.mean():.4f} ± {scores.std():.4f}")
+        dt = DecisionTreeClassifier(max_depth=depth, random_state=42, class_weight='balanced')
+        if cv_strategy:
+            try:
+                scores = cross_val_score(dt, X_train, y_train, cv=cv_strategy,
+                                         scoring='roc_auc', n_jobs=-1)
+                results.append({
+                    'max_depth': depth,
+                    'Mean AUC': scores.mean(),
+                    'Std AUC': scores.std()
+                })
+                print(f"  depth={depth}: AUC = {scores.mean():.4f} ± {scores.std():.4f}")
+            except Exception:
+                pass
+
+    if not results:
+        print("  Warning: CV failed. Using default max_depth=5")
+        return 5, pd.DataFrame([{'max_depth': 5, 'Mean AUC': 0.5, 'Std AUC': 0.0}])
 
     df = pd.DataFrame(results)
     best_idx = df['Mean AUC'].idxmax()
@@ -59,7 +73,7 @@ def tune_tree_depth(X_train, y_train, max_depth_range=range(2, 16)):
 
 def train_decision_tree(X_train, y_train, max_depth=5):
     """Train a decision tree classifier."""
-    dt = DecisionTreeClassifier(max_depth=max_depth, random_state=42)
+    dt = DecisionTreeClassifier(max_depth=max_depth, random_state=42, class_weight='balanced')
     dt.fit(X_train, y_train)
     print(f"  Trained Decision Tree (max_depth={max_depth})")
     return dt

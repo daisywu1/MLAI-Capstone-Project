@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import (
     classification_report, confusion_matrix,
     roc_curve, auc, RocCurveDisplay
@@ -27,12 +27,28 @@ def find_optimal_k(X_train, y_train, k_range=range(1, 16), cv=5):
     Returns (best_k, scores_dict).
     """
     scores = {}
+    n_positive = int(y_train.sum())
+    if n_positive < cv:
+        cv = max(2, n_positive)
+        
+    cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42) if cv >= 2 else None
+    
     for k in k_range:
         knn = KNeighborsClassifier(n_neighbors=k)
-        cv_scores = cross_val_score(knn, X_train, y_train, cv=cv,
-                                    scoring='roc_auc', n_jobs=-1)
-        scores[k] = cv_scores.mean()
-        print(f"  k={k}: AUC = {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+        if cv_strategy:
+            try:
+                cv_scores = cross_val_score(knn, X_train, y_train, cv=cv_strategy,
+                                            scoring='roc_auc', n_jobs=-1)
+                scores[k] = cv_scores.mean()
+                print(f"  k={k}: AUC = {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+            except Exception:
+                scores[k] = 0.5
+        else:
+            scores[k] = 0.5
+
+    if not scores or all(v == 0.5 for v in scores.values()):
+        print("  Warning: CV failed. Using default k=5")
+        return 5, {5: 0.5}
 
     best_k = max(scores, key=scores.get)
     print(f"\n  Best k = {best_k} (AUC = {scores[best_k]:.4f})")
@@ -65,7 +81,7 @@ def train_logistic_regression(X_train, y_train, feature_names=None,
                                C=1.0):
     """Train logistic regression and display feature coefficients."""
     lr = LogisticRegression(C=C, max_iter=1000, solver='lbfgs',
-                            random_state=42)
+                            random_state=42, class_weight='balanced')
     lr.fit(X_train, y_train)
     print(f"  Trained Logistic Regression (C={C:.4f})")
 

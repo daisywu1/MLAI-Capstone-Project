@@ -8,7 +8,7 @@ import joblib
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.model_selection import cross_val_score, learning_curve
+from sklearn.model_selection import cross_val_score, learning_curve, StratifiedKFold
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, classification_report, confusion_matrix
@@ -30,24 +30,41 @@ def compare_models(X_train: np.ndarray, y_train: np.ndarray,
     """
     models = {
         'Logistic Regression (L2)': LogisticRegression(
-            max_iter=1000, solver='lbfgs', random_state=42),
+            max_iter=1000, solver='lbfgs', random_state=42, class_weight='balanced'),
         'Logistic Regression (L1)': LogisticRegression(
-            penalty='l1', max_iter=1000, solver='saga', random_state=42),
+            penalty='l1', max_iter=1000, solver='saga', random_state=42, class_weight='balanced'),
         'KNN (k=5)': KNeighborsClassifier(n_neighbors=5),
         'Decision Tree (depth=5)': DecisionTreeClassifier(
-            max_depth=5, random_state=42),
+            max_depth=5, random_state=42, class_weight='balanced'),
     }
 
+    n_positive = int(y_train.sum())
+    if n_positive < cv:
+        print(f"  Warning: Only {n_positive} positive samples. Reducing CV folds to {max(2, n_positive)}.")
+        cv = max(2, n_positive)
+        
+    if cv < 2:
+        print("  Warning: Not enough positive samples for cross-validation. Skipping model comparison.")
+        return pd.DataFrame()
+
+    cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
     results = []
+    
     for name, model in models.items():
-        scores = cross_val_score(model, X_train, y_train, cv=cv,
-                                 scoring='roc_auc', n_jobs=-1)
-        results.append({
-            'Model': name,
-            'Mean ROC AUC': scores.mean(),
-            'Std ROC AUC': scores.std(),
-        })
-        print(f"  {name}: AUC = {scores.mean():.4f} ± {scores.std():.4f}")
+        try:
+            scores = cross_val_score(model, X_train, y_train, cv=cv_strategy,
+                                     scoring='roc_auc', n_jobs=-1)
+            results.append({
+                'Model': name,
+                'Mean ROC AUC': scores.mean(),
+                'Std ROC AUC': scores.std(),
+            })
+            print(f"  {name}: AUC = {scores.mean():.4f} ± {scores.std():.4f}")
+        except Exception as e:
+            print(f"  {name}: Failed CV ({str(e)})")
+
+    if not results:
+        return pd.DataFrame()
 
     df = pd.DataFrame(results).sort_values('Mean ROC AUC', ascending=False)
 
@@ -73,12 +90,27 @@ def tune_regularization(X_train: np.ndarray, y_train: np.ndarray,
     C_values = np.logspace(-4, 4, 20)
     results = []
 
-    for C in C_values:
-        lr = LogisticRegression(C=C, max_iter=1000, solver='lbfgs',
-                                random_state=42)
-        scores = cross_val_score(lr, X_train, y_train, cv=cv,
-                                 scoring='roc_auc', n_jobs=-1)
-        results.append({'C': C, 'Mean AUC': scores.mean(), 'Std AUC': scores.std()})
+    n_positive = int(y_train.sum())
+    if n_positive < cv:
+        cv = max(2, n_positive)
+        
+    if cv >= 2:
+        cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
+        for C in C_values:
+            lr = LogisticRegression(C=C, max_iter=1000, solver='lbfgs',
+                                    random_state=42, class_weight='balanced')
+            try:
+                scores = cross_val_score(lr, X_train, y_train, cv=cv_strategy,
+                                         scoring='roc_auc', n_jobs=-1)
+                results.append({'C': C, 'Mean AUC': scores.mean(), 'Std AUC': scores.std()})
+            except Exception:
+                pass
+
+    if not results:
+        print("  Warning: CV failed. Using default C=1.0")
+        best_model = LogisticRegression(C=1.0, max_iter=1000, solver='lbfgs', random_state=42, class_weight='balanced')
+        best_model.fit(X_train, y_train)
+        return best_model, pd.DataFrame([{'C': 1.0, 'Mean AUC': 0.5, 'Std AUC': 0.0}])
 
     df = pd.DataFrame(results)
     best_idx = df['Mean AUC'].idxmax()
@@ -86,7 +118,7 @@ def tune_regularization(X_train: np.ndarray, y_train: np.ndarray,
     print(f"  Best C = {best_C:.6f} (AUC = {df.loc[best_idx, 'Mean AUC']:.4f})")
 
     best_model = LogisticRegression(C=best_C, max_iter=1000, solver='lbfgs',
-                                    random_state=42)
+                                    random_state=42, class_weight='balanced')
     best_model.fit(X_train, y_train)
 
     fig, ax = plt.subplots(figsize=(10, 5))
