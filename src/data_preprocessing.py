@@ -22,6 +22,9 @@ AUTH_COLUMNS = [
 
 REDTEAM_COLUMNS = ['time', 'src_user_domain', 'src_computer', 'dst_computer']
 
+# ~1.6 billion total rows in the full dataset
+_TOTAL_ROWS_ESTIMATE = 1_648_275_307
+
 
 def _find_auth_file():
     """Locate auth.txt or auth.txt.gz in data/raw/."""
@@ -46,12 +49,12 @@ def _find_redteam_file():
 
 
 def load_auth_data(nrows: int = 1_000_000) -> pd.DataFrame:
-    """Load authentication events from the LANL dataset.
+    """Load the first N authentication events (fast, but covers limited time).
 
     Parameters
     ----------
     nrows : int
-        Number of rows to load (default 1M ≈ 1% of full dataset).
+        Number of rows to load from the start of the file.
     """
     path = _find_auth_file()
     print(f"Loading auth data from {path} ({nrows:,} rows)...")
@@ -65,6 +68,66 @@ def load_auth_data(nrows: int = 1_000_000) -> pd.DataFrame:
     )
     print(f"  Loaded {len(df):,} rows, {df.shape[1]} columns")
     print(f"  Time range: {df['time'].min()} – {df['time'].max()} seconds")
+    return df
+
+
+def load_auth_data_sampled(target_rows: int = 1_000_000,
+                           chunk_size: int = 5_000_000,
+                           random_state: int = 42) -> pd.DataFrame:
+    """Load a sample of authentication events spread across the full dataset.
+
+    Reads the file in chunks and randomly samples from each chunk so the
+    result covers the entire 58-day time range rather than just the first
+    few hours.
+
+    Parameters
+    ----------
+    target_rows : int
+        Approximate number of rows in the final sample.
+    chunk_size : int
+        Rows per chunk when reading the file.
+    random_state : int
+        Random seed for reproducibility.
+    """
+    path = _find_auth_file()
+    sampling_rate = target_rows / _TOTAL_ROWS_ESTIMATE
+    print(f"Loading stratified sample (~{target_rows:,} rows, "
+          f"rate={sampling_rate:.6f}) from {path}...")
+
+    rng = np.random.RandomState(random_state)
+    chunks = []
+    rows_collected = 0
+
+    reader = pd.read_csv(
+        path,
+        names=AUTH_COLUMNS,
+        na_values='?',
+        low_memory=False,
+        chunksize=chunk_size,
+    )
+
+    for i, chunk in enumerate(reader):
+        n_sample = max(1, int(len(chunk) * sampling_rate))
+        sampled = chunk.sample(n=min(n_sample, len(chunk)), random_state=rng)
+        chunks.append(sampled)
+        rows_collected += len(sampled)
+
+        if (i + 1) % 20 == 0:
+            print(f"  ... processed {(i+1)*chunk_size/1e6:.0f}M rows, "
+                  f"collected {rows_collected:,} so far")
+
+        if rows_collected >= target_rows * 1.1:
+            break
+
+    df = pd.concat(chunks, ignore_index=True).sort_values('time').reset_index(drop=True)
+
+    if len(df) > target_rows:
+        df = df.sample(n=target_rows, random_state=random_state).sort_values('time').reset_index(drop=True)
+
+    days = (df['time'].max() - df['time'].min()) / 86400
+    print(f"  Loaded {len(df):,} rows, {df.shape[1]} columns")
+    print(f"  Time range: {df['time'].min()} – {df['time'].max()} seconds "
+          f"({days:.1f} days)")
     return df
 
 

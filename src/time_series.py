@@ -51,6 +51,12 @@ def decompose_timeseries(ts: pd.Series, period: int = 24):
     -------
     DecomposeResult with trend, seasonal, resid components
     """
+    min_obs = 2 * period
+    if len(ts) < min_obs:
+        print(f"  Warning: only {len(ts)} observations, need {min_obs} for "
+              f"period={period}. Reducing period to {len(ts) // 2}.")
+        period = max(2, len(ts) // 2)
+
     decomposition = seasonal_decompose(ts, model='additive', period=period)
 
     fig, axes = plt.subplots(4, 1, figsize=(14, 10), sharex=True)
