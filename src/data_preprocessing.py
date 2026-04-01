@@ -77,8 +77,9 @@ def load_auth_data_sampled(target_rows: int = 1_000_000,
     """Load a sample of authentication events spread across the full dataset.
 
     Reads the file in chunks and randomly samples from each chunk so the
-    result covers the entire 58-day time range rather than just the first
-    few hours.
+    result covers the entire 58-day time range. It explicitly hunts for and
+    retains 100% of the known red team events it encounters to ensure the
+    resulting sample has positive labels for model training.
 
     Parameters
     ----------
@@ -98,6 +99,13 @@ def load_auth_data_sampled(target_rows: int = 1_000_000,
     chunks = []
     rows_collected = 0
 
+    # Pre-load red team labels to ensure we don't drop them during sampling
+    redteam = load_redteam_labels()
+    redteam_keys = set(
+        zip(redteam['time'], redteam['src_user_domain'],
+            redteam['src_computer'], redteam['dst_computer'])
+    )
+
     reader = pd.read_csv(
         path,
         names=AUTH_COLUMNS,
@@ -107,10 +115,23 @@ def load_auth_data_sampled(target_rows: int = 1_000_000,
     )
 
     for i, chunk in enumerate(reader):
-        n_sample = max(1, int(len(chunk) * sampling_rate))
-        sampled = chunk.sample(n=min(n_sample, len(chunk)), random_state=rng)
-        chunks.append(sampled)
-        rows_collected += len(sampled)
+        # 1. Identify and keep all red team events in this chunk
+        is_red = chunk.apply(
+            lambda r: (r['time'], r['src_user_domain'],
+                       r['src_computer'], r['dst_computer']) in redteam_keys,
+            axis=1
+        )
+        red_chunk = chunk[is_red]
+
+        # 2. Sample from the normal events
+        normal_chunk = chunk[~is_red]
+        n_sample = max(1, int(len(normal_chunk) * sampling_rate))
+        sampled_normal = normal_chunk.sample(n=min(n_sample, len(normal_chunk)), random_state=rng)
+
+        # Combine and store
+        combined = pd.concat([red_chunk, sampled_normal])
+        chunks.append(combined)
+        rows_collected += len(combined)
 
         if (i + 1) % 20 == 0:
             print(f"  ... processed {(i+1)*chunk_size/1e6:.0f}M rows, "
@@ -121,8 +142,22 @@ def load_auth_data_sampled(target_rows: int = 1_000_000,
 
     df = pd.concat(chunks, ignore_index=True).sort_values('time').reset_index(drop=True)
 
+    # If we overshot the target, downsample the normal events again, keeping all red team events
     if len(df) > target_rows:
-        df = df.sample(n=target_rows, random_state=random_state).sort_values('time').reset_index(drop=True)
+        is_red_final = df.apply(
+            lambda r: (r['time'], r['src_user_domain'],
+                       r['src_computer'], r['dst_computer']) in redteam_keys,
+            axis=1
+        )
+        df_red = df[is_red_final]
+        df_normal = df[~is_red_final]
+
+        needed_normal = target_rows - len(df_red)
+        if needed_normal > 0:
+            df_normal_sampled = df_normal.sample(n=needed_normal, random_state=random_state)
+            df = pd.concat([df_red, df_normal_sampled]).sort_values('time').reset_index(drop=True)
+        else:
+            df = df_red
 
     days = (df['time'].max() - df['time'].min()) / 86400
     print(f"  Loaded {len(df):,} rows, {df.shape[1]} columns")

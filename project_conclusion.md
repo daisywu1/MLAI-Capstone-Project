@@ -20,26 +20,30 @@ This project set out to determine whether machine learning techniques can effect
 
 We constructed 16 behavioral features from raw log fields:
 
-| Category | Features | Rationale |
-|----------|----------|-----------|
-| **Temporal** | hour, day_of_week, is_off_hours, is_weekend | Attackers often operate outside business hours |
-| **Frequency** | login_count_1h, login_count_6h, login_count_24h | Brute-force and credential stuffing produce bursts |
-| **Failure** | fail_count_1h, fail_ratio_24h | Failed authentication attempts signal compromise attempts |
-| **Diversity** | unique_dst_computers_24h, unique_auth_types_24h, unique_logon_types_24h | Lateral movement touches many machines |
-| **Behavioral** | time_since_last_login, is_new_dst_computer, events_per_minute_10m | Compromised accounts show unusual access patterns |
+
+| Category       | Features                                                                | Rationale                                                 |
+| -------------- | ----------------------------------------------------------------------- | --------------------------------------------------------- |
+| **Temporal**   | hour, day_of_week, is_off_hours, is_weekend                             | Attackers often operate outside business hours            |
+| **Frequency**  | login_count_1h, login_count_6h, login_count_24h                         | Brute-force and credential stuffing produce bursts        |
+| **Failure**    | fail_count_1h, fail_ratio_24h                                           | Failed authentication attempts signal compromise attempts |
+| **Diversity**  | unique_dst_computers_24h, unique_auth_types_24h, unique_logon_types_24h | Lateral movement touches many machines                    |
+| **Behavioral** | time_since_last_login, is_new_dst_computer, events_per_minute_10m       | Compromised accounts show unusual access patterns         |
+
 
 ### Techniques Applied
 
-| Technique | Module | Application |
-|-----------|--------|-------------|
-| PCA & K-Means Clustering | Module 6 | Reduced 16 features to 2 principal components for visualization; identified 3 natural behavioral clusters |
-| Feature Engineering & Overfitting | Module 8 | Built behavioral features with train/test splits and cross-validation |
-| Model Selection & Regularization | Module 9 | Compared 4 models via 5-fold CV; tuned L1/L2 regularization strength |
-| Time Series Analysis | Module 10 | Decomposed hourly event volume into trend/seasonal/residual; detected temporal anomalies via rolling z-score |
-| KNN Classification | Module 11 | Tuned k from 1–15 via cross-validation |
-| Logistic Regression | Module 13 | Baseline classifier with interpretable feature weights |
-| Decision Trees | Module 14 | Produced human-readable rules for security analysts |
-| Gradient Descent & Optimization | Module 15 | Reflected in solver selection and convergence tuning for logistic regression |
+
+| Technique                         | Module    | Application                                                                                                  |
+| --------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------ |
+| PCA & K-Means Clustering          | Module 6  | Reduced 16 features to 2 principal components for visualization; identified 3 natural behavioral clusters    |
+| Feature Engineering & Overfitting | Module 8  | Built behavioral features with train/test splits and cross-validation                                        |
+| Model Selection & Regularization  | Module 9  | Compared 4 models via 5-fold CV; tuned L1/L2 regularization strength                                         |
+| Time Series Analysis              | Module 10 | Decomposed hourly event volume into trend/seasonal/residual; detected temporal anomalies via rolling z-score |
+| KNN Classification                | Module 11 | Tuned k from 1–15 via cross-validation                                                                       |
+| Logistic Regression               | Module 13 | Baseline classifier with interpretable feature weights                                                       |
+| Decision Trees                    | Module 14 | Produced human-readable rules for security analysts                                                          |
+| Gradient Descent & Optimization   | Module 15 | Reflected in solver selection and convergence tuning for logistic regression                                 |
+
 
 ## 3. Key Findings
 
@@ -47,7 +51,7 @@ We constructed 16 behavioral features from raw log fields:
 
 - **Volume**: The dataset shows strong daily seasonality with peak activity during business hours and reduced volume overnight and on weekends.
 - **Success Rate**: >99% of authentication events succeed; failures are rare but concentrated among specific users and computers.
-- **Authentication Types**: Kerberos dominates (~86%), followed by NTLM (~10%) and Negotiate (~3%). Red team events use a mix of types.
+- **Authentication Types**: Kerberos dominates (~~86%), followed by NTLM (~~10%) and Negotiate (~3%). Red team events use a mix of types.
 - **Class Imbalance**: Red team events represent ~0.00005% of all events — an extreme imbalance that requires careful handling.
 
 ### 3.2 PCA and Clustering
@@ -67,12 +71,14 @@ We constructed 16 behavioral features from raw log fields:
 
 All models were evaluated using 5-fold cross-validation with ROC AUC as the primary metric, given the extreme class imbalance:
 
-| Model | Strengths | Limitations |
-|-------|-----------|-------------|
-| **Logistic Regression (L2)** | Interpretable coefficients, fast training, strong baseline | Linear decision boundary |
-| **Logistic Regression (L1)** | Feature selection via coefficient sparsity | Slightly lower AUC than L2 |
-| **KNN** | Captures local behavioral patterns | Slow inference on large datasets |
-| **Decision Tree** | Produces actionable rules, handles nonlinearity | Prone to overfitting without depth control |
+
+| Model                        | Strengths                                                  | Limitations                                |
+| ---------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
+| **Logistic Regression (L2)** | Interpretable coefficients, fast training, strong baseline | Linear decision boundary                   |
+| **Logistic Regression (L1)** | Feature selection via coefficient sparsity                 | Slightly lower AUC than L2                 |
+| **KNN**                      | Captures local behavioral patterns                         | Slow inference on large datasets           |
+| **Decision Tree**            | Produces actionable rules, handles nonlinearity            | Prone to overfitting without depth control |
+
 
 ### 3.5 Most Important Features
 
@@ -96,13 +102,9 @@ These provide immediate detection capability without requiring ML model deployme
 ## 4. Limitations
 
 1. **Anonymized Data**: The LANL dataset is de-identified — real-world features like IP geolocation, user-agent strings, and application names are unavailable. These would likely improve detection significantly.
-
 2. **Extreme Class Imbalance**: With only 749 positive events out of ~1.6 billion, standard accuracy is meaningless. We rely on ROC AUC, precision-recall, and stratified evaluation, but the rarity of positives limits what supervised models can learn.
-
 3. **Sampling**: We analyzed ~1M rows (a stratified sample). Results may shift at full scale, particularly for rare-event detection.
-
 4. **Label Completeness**: Red team labels represent *known* compromises only. There may be additional undetected malicious activity that our models could surface but cannot be validated.
-
 5. **Static Analysis**: This is a batch analysis. Real-world deployment would require streaming/online learning to detect threats in real time.
 
 ## 5. Future Work
@@ -120,6 +122,6 @@ This project demonstrates that machine learning can effectively surface anomalou
 
 ## References
 
-1. A. D. Kent, "Comprehensive, Multi-Source Cybersecurity Events," Los Alamos National Laboratory, 2015. http://dx.doi.org/10.17021/1179829
-
+1. A. D. Kent, "Comprehensive, Multi-Source Cybersecurity Events," Los Alamos National Laboratory, 2015. [http://dx.doi.org/10.17021/1179829](http://dx.doi.org/10.17021/1179829)
 2. A. D. Kent, "Cybersecurity Data Sources for Dynamic Network Research," in *Dynamic Networks in Cybersecurity*, Imperial College Press, 2015.
+
