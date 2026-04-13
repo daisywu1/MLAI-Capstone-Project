@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.tree import DecisionTreeClassifier, export_text, plot_tree
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from src.utils import IMAGES_DIR
 
@@ -28,7 +30,7 @@ def tune_tree_depth(X_train, y_train, max_depth_range=range(2, 16), cv=5):
     cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42) if cv >= 2 else None
 
     for depth in max_depth_range:
-        dt = DecisionTreeClassifier(max_depth=depth, random_state=42, class_weight='balanced')
+        dt = make_pipeline(StandardScaler(), DecisionTreeClassifier(max_depth=depth, random_state=42, class_weight='balanced'))
         if cv_strategy:
             try:
                 scores = cross_val_score(dt, X_train, y_train, cv=cv_strategy,
@@ -73,16 +75,16 @@ def tune_tree_depth(X_train, y_train, max_depth_range=range(2, 16), cv=5):
 
 def train_decision_tree(X_train, y_train, max_depth=5):
     """Train a decision tree classifier."""
-    dt = DecisionTreeClassifier(max_depth=max_depth, random_state=42, class_weight='balanced')
+    dt = make_pipeline(StandardScaler(), DecisionTreeClassifier(max_depth=max_depth, random_state=42, class_weight='balanced'))
     dt.fit(X_train, y_train)
     print(f"  Trained Decision Tree (max_depth={max_depth})")
     return dt
 
-
 def visualize_tree(dt, feature_names, max_depth_display=3):
     """Visualize the decision tree."""
+    model = dt.named_steps['decisiontreeclassifier'] if hasattr(dt, 'named_steps') else dt
     fig, ax = plt.subplots(figsize=(24, 12))
-    plot_tree(dt, feature_names=feature_names,
+    plot_tree(model, feature_names=feature_names,
               class_names=['Normal', 'Suspicious'],
               filled=True, rounded=True, ax=ax,
               max_depth=max_depth_display, fontsize=9,
@@ -92,22 +94,22 @@ def visualize_tree(dt, feature_names, max_depth_display=3):
     _save_fig('dt_visualization')
     plt.show()
 
-
 def extract_rules(dt, feature_names, max_depth=4):
     """Extract human-readable rules from the decision tree."""
-    rules_text = export_text(dt, feature_names=feature_names, max_depth=max_depth)
+    model = dt.named_steps['decisiontreeclassifier'] if hasattr(dt, 'named_steps') else dt
+    rules_text = export_text(model, feature_names=feature_names, max_depth=max_depth)
     print("  Decision Tree Rules:")
     print("  " + "-" * 50)
     for line in rules_text.split('\n'):
         print(f"  {line}")
     return rules_text
 
-
 def get_feature_importance(dt, feature_names):
     """Get and plot feature importance from the decision tree."""
+    model = dt.named_steps['decisiontreeclassifier'] if hasattr(dt, 'named_steps') else dt
     importance_df = pd.DataFrame({
         'Feature': feature_names,
-        'Importance': dt.feature_importances_
+        'Importance': model.feature_importances_
     }).sort_values('Importance', ascending=False)
 
     print("  Feature Importance:")

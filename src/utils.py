@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
@@ -32,8 +33,8 @@ def load_processed_data(filename: str) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def prepare_train_test(df_features: pd.DataFrame, test_size=0.2, random_state=42):
-    """Split feature matrix into train/test sets with scaling.
+def prepare_train_test(df_features: pd.DataFrame, test_size=0.2, random_state=42, apply_smote=True):
+    """Split feature matrix into train/test sets with scaling and optional SMOTE.
 
     Returns (X_train, X_test, y_train, y_test, scaler, feature_names).
     """
@@ -62,5 +63,20 @@ def prepare_train_test(df_features: pd.DataFrame, test_size=0.2, random_state=42
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
+    
+    # Clip extreme scaled values to prevent overflow
+    X_train = np.clip(X_train, -10, 10)
+    X_test = np.clip(X_test, -10, 10)
+
+    if apply_smote and use_stratify:
+        print("  Applying SMOTE to balance the training data...")
+        n_pos_train = int(y_train.sum())
+        k_neighbors = min(5, n_pos_train - 1)
+        if k_neighbors > 0:
+            smote = SMOTE(random_state=random_state, k_neighbors=k_neighbors)
+            X_train, y_train = smote.fit_resample(X_train, y_train)
+            print(f"  After SMOTE: Train has {len(X_train):,} rows ({int(y_train.sum()):,} positive)")
+        else:
+            print("  Warning: Not enough positive samples in train set for SMOTE. Skipping.")
 
     return X_train, X_test, y_train, y_test, scaler, feature_cols

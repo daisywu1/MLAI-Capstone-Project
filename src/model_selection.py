@@ -8,11 +8,17 @@ import joblib
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.model_selection import cross_val_score, learning_curve, StratifiedKFold
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import LinearSVC
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+import time
+from sklearn.model_selection import cross_val_score, learning_curve, StratifiedKFold, GridSearchCV
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, classification_report, confusion_matrix
 )
+import shap
 from src.utils import IMAGES_DIR, MODELS_DIR
 
 
@@ -29,13 +35,17 @@ def compare_models(X_train: np.ndarray, y_train: np.ndarray,
     Returns a DataFrame with mean and std scores for each model.
     """
     models = {
-        'Logistic Regression (L2)': LogisticRegression(
-            max_iter=1000, solver='lbfgs', random_state=42, class_weight='balanced'),
-        'Logistic Regression (L1)': LogisticRegression(
-            penalty='l1', max_iter=1000, solver='saga', random_state=42, class_weight='balanced'),
-        'KNN (k=5)': KNeighborsClassifier(n_neighbors=5),
-        'Decision Tree (depth=5)': DecisionTreeClassifier(
-            max_depth=5, random_state=42, class_weight='balanced'),
+        'Logistic Regression (L2)': make_pipeline(StandardScaler(), LogisticRegression(
+            max_iter=1000, solver='lbfgs', random_state=42, class_weight='balanced')),
+        'Logistic Regression (L1)': make_pipeline(StandardScaler(), LogisticRegression(
+            penalty='l1', max_iter=1000, solver='saga', random_state=42, class_weight='balanced')),
+        'KNN (k=5)': make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=5)),
+        'Decision Tree (depth=5)': make_pipeline(StandardScaler(), DecisionTreeClassifier(
+            max_depth=5, random_state=42, class_weight='balanced')),
+        'Random Forest': make_pipeline(StandardScaler(), RandomForestClassifier(
+            n_estimators=100, max_depth=5, random_state=42, class_weight='balanced', n_jobs=-1)),
+        'Support Vector Machine': make_pipeline(StandardScaler(), LinearSVC(
+            random_state=42, class_weight='balanced', max_iter=2000))
     }
 
     n_positive = int(y_train.sum())
@@ -97,8 +107,8 @@ def tune_regularization(X_train: np.ndarray, y_train: np.ndarray,
     if cv >= 2:
         cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
         for C in C_values:
-            lr = LogisticRegression(C=C, max_iter=1000, solver='lbfgs',
-                                    random_state=42, class_weight='balanced')
+            lr = make_pipeline(StandardScaler(), LogisticRegression(C=C, max_iter=1000, solver='lbfgs',
+                                    random_state=42, class_weight='balanced'))
             try:
                 scores = cross_val_score(lr, X_train, y_train, cv=cv_strategy,
                                          scoring='roc_auc', n_jobs=-1)
@@ -108,7 +118,7 @@ def tune_regularization(X_train: np.ndarray, y_train: np.ndarray,
 
     if not results:
         print("  Warning: CV failed. Using default C=1.0")
-        best_model = LogisticRegression(C=1.0, max_iter=1000, solver='lbfgs', random_state=42, class_weight='balanced')
+        best_model = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, max_iter=1000, solver='lbfgs', random_state=42, class_weight='balanced'))
         best_model.fit(X_train, y_train)
         return best_model, pd.DataFrame([{'C': 1.0, 'Mean AUC': 0.5, 'Std AUC': 0.0}])
 
@@ -117,8 +127,8 @@ def tune_regularization(X_train: np.ndarray, y_train: np.ndarray,
     best_C = df.loc[best_idx, 'C']
     print(f"  Best C = {best_C:.6f} (AUC = {df.loc[best_idx, 'Mean AUC']:.4f})")
 
-    best_model = LogisticRegression(C=best_C, max_iter=1000, solver='lbfgs',
-                                    random_state=42, class_weight='balanced')
+    best_model = make_pipeline(StandardScaler(), LogisticRegression(C=best_C, max_iter=1000, solver='lbfgs',
+                                    random_state=42, class_weight='balanced'))
     best_model.fit(X_train, y_train)
 
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -174,6 +184,8 @@ def evaluate_model(model, X_test, y_test):
     y_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else None
 
+    if hasattr(model, 'train_time_'):
+        print(f"  Train Time: {model.train_time_:.4f} seconds")
     print(f"  Accuracy:  {accuracy_score(y_test, y_pred):.4f}")
     print(f"  Precision: {precision_score(y_test, y_pred, zero_division=0):.4f}")
     print(f"  Recall:    {recall_score(y_test, y_pred, zero_division=0):.4f}")
@@ -188,3 +200,91 @@ def save_model(model, filename: str):
     path = os.path.join(MODELS_DIR, filename)
     joblib.dump(model, path)
     print(f"  Saved model: {path}")
+
+def perform_grid_search(X_train: np.ndarray, y_train: np.ndarray, cv: int = 5):
+    """Use GridSearchCV to find the best hyperparameters for multiple models."""
+    print("Performing GridSearchCV to find the best hyperparameters...")
+    n_positive = int(y_train.sum())
+    if n_positive < cv:
+        cv = max(2, n_positive)
+    cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42) if cv >= 2 else None
+
+    pipelines = {
+        'Logistic Regression': make_pipeline(StandardScaler(), LogisticRegression(random_state=42, class_weight='balanced', max_iter=1000)),
+        'Decision Tree': make_pipeline(StandardScaler(), DecisionTreeClassifier(random_state=42, class_weight='balanced')),
+        'Random Forest': make_pipeline(StandardScaler(), RandomForestClassifier(random_state=42, class_weight='balanced', n_jobs=-1)),
+        'SVM': make_pipeline(StandardScaler(), LinearSVC(random_state=42, class_weight='balanced', max_iter=2000))
+    }
+
+    param_grids = {
+        'Logistic Regression': {'logisticregression__C': [0.01, 0.1, 1, 10]},
+        'Decision Tree': {'decisiontreeclassifier__max_depth': [3, 5, 7, 10]},
+        'Random Forest': {'randomforestclassifier__n_estimators': [50, 100], 'randomforestclassifier__max_depth': [5, 10]},
+        'SVM': {'linearsvc__C': [0.01, 0.1, 1, 10]}
+    }
+
+    best_models = {}
+    for name in pipelines:
+        print(f"\n  Tuning {name}...")
+        if cv_strategy:
+            grid = GridSearchCV(pipelines[name], param_grids[name], cv=cv_strategy, scoring='roc_auc', n_jobs=-1)
+            grid.fit(X_train, y_train)
+            best_models[name] = grid.best_estimator_
+            best_models[name].train_time_ = grid.refit_time_
+            print(f"    Best params: {grid.best_params_}")
+            print(f"    Best CV AUC: {grid.best_score_:.4f}")
+            print(f"    Refit Time: {grid.refit_time_:.4f}s")
+            
+            if name == 'Logistic Regression':
+                model = grid.best_estimator_.named_steps['logisticregression']
+                print(f"    Best C: {model.C}")
+            elif name == 'Decision Tree':
+                model = grid.best_estimator_.named_steps['decisiontreeclassifier']
+                print(f"    Best max_depth: {model.max_depth}")
+            elif name == 'Random Forest':
+                model = grid.best_estimator_.named_steps['randomforestclassifier']
+                print(f"    Best n_estimators: {model.n_estimators}, max_depth: {model.max_depth}")
+            elif name == 'SVM':
+                model = grid.best_estimator_.named_steps['linearsvc']
+                print(f"    Best C: {model.C}")
+        else:
+            start_time = time.time()
+            pipelines[name].fit(X_train, y_train)
+            best_models[name] = pipelines[name]
+            best_models[name].train_time_ = time.time() - start_time
+            print(f"    Not enough positive samples for CV. Using default params.")
+            print(f"    Train Time: {best_models[name].train_time_:.4f}s")
+    return best_models
+
+
+def generate_shap_summary(best_pipeline, X_train, feature_names):
+    """Generate and save a SHAP summary plot for the best model."""
+    print("\nGenerating SHAP summary plot for the best model...")
+    scaler = best_pipeline.steps[0][1]
+    model = best_pipeline.steps[1][1]
+
+    # Sample background data to speed up SHAP calculation
+    if isinstance(X_train, pd.DataFrame):
+        X_sample = X_train.sample(n=min(500, len(X_train)), random_state=42)
+    else:
+        np.random.seed(42)
+        indices = np.random.choice(X_train.shape[0], min(500, X_train.shape[0]), replace=False)
+        X_sample = X_train[indices]
+
+    X_sample_scaled = scaler.transform(X_sample)
+
+    if type(model).__name__ in ['RandomForestClassifier', 'DecisionTreeClassifier']:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_sample_scaled)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1] # Get values for the positive class
+    else:
+        explainer = shap.LinearExplainer(model, X_sample_scaled)
+        shap_values = explainer.shap_values(X_sample_scaled)
+
+    plt.figure(figsize=(10, 6))
+    shap.summary_plot(shap_values, X_sample_scaled, feature_names=feature_names, show=False)
+    plt.title('SHAP Summary Plot: Feature Impact on Model Output')
+    plt.tight_layout()
+    _save_fig('shap_summary')
+    plt.show()

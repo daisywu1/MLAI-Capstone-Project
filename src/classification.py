@@ -1,12 +1,15 @@
 """KNN and Logistic Regression classification with evaluation plots."""
 
 import os
+import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import (
     classification_report, confusion_matrix,
@@ -34,7 +37,7 @@ def find_optimal_k(X_train, y_train, k_range=range(1, 16), cv=5):
     cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42) if cv >= 2 else None
     
     for k in k_range:
-        knn = KNeighborsClassifier(n_neighbors=k)
+        knn = make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=k))
         if cv_strategy:
             try:
                 cv_scores = cross_val_score(knn, X_train, y_train, cv=cv_strategy,
@@ -71,24 +74,28 @@ def find_optimal_k(X_train, y_train, k_range=range(1, 16), cv=5):
 
 def train_knn(X_train, y_train, n_neighbors=5):
     """Train a KNN classifier."""
-    knn = KNeighborsClassifier(n_neighbors=n_neighbors)
+    knn = make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=n_neighbors))
+    start_time = time.time()
     knn.fit(X_train, y_train)
-    print(f"  Trained KNN with k={n_neighbors}")
+    knn.train_time_ = time.time() - start_time
+    print(f"  Trained KNN with k={n_neighbors} in {knn.train_time_:.4f}s")
     return knn
 
 
 def train_logistic_regression(X_train, y_train, feature_names=None,
                                C=1.0):
     """Train logistic regression and display feature coefficients."""
-    lr = LogisticRegression(C=C, max_iter=1000, solver='lbfgs',
-                            random_state=42, class_weight='balanced')
+    lr = make_pipeline(StandardScaler(), LogisticRegression(C=C, max_iter=1000, solver='lbfgs',
+                            random_state=42, class_weight='balanced'))
     lr.fit(X_train, y_train)
     print(f"  Trained Logistic Regression (C={C:.4f})")
 
     if feature_names is not None:
+        # Extract the actual model from the pipeline
+        model = lr.named_steps['logisticregression']
         coef_df = pd.DataFrame({
             'Feature': feature_names,
-            'Coefficient': lr.coef_[0]
+            'Coefficient': model.coef_[0]
         }).sort_values('Coefficient', key=abs, ascending=False)
 
         print("\n  Feature Coefficients (sorted by magnitude):")
@@ -115,6 +122,8 @@ def print_classification_report(model, X_test, y_test, model_name: str):
     y_pred = model.predict(X_test)
     print(f"\n  Classification Report — {model_name}")
     print(f"  {'-'*50}")
+    if hasattr(model, 'train_time_'):
+        print(f"  Train Time: {model.train_time_:.4f} seconds")
     print(classification_report(y_test, y_pred, zero_division=0))
 
 

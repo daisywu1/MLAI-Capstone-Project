@@ -26,7 +26,7 @@ The project uses authentication log data from the LANL dataset, representing 58 
 | Known red team (malicious) events | 749 |
 | Class imbalance ratio | ~0.00005% positive |
 
-My data pipeline processed a stratified sample of the dataset, yielding ~638,500 log events, of which only 702 were labeled as malicious (an extreme class imbalance of roughly 0.1%).
+My data pipeline processed a stratified sample of the dataset, yielding ~638,500 log events, of which only 702 were labeled as malicious (an extreme class imbalance of roughly 0.1%). To address this before model training, I applied the **SMOTE** (Synthetic Minority Over-sampling Technique) strategy to synthesize new minority class examples, preventing models from simply defaulting to the majority class.
 
 From an engineering perspective, feeding raw log strings (like `user@domain`) directly into a model is ineffective. The real work was in feature engineering—transforming raw logs into behavioral metrics. I constructed 16 behavioral features, with the most discriminative being:
 1. `unique_dst_computers_24h`: The count of distinct destination computers a user accessed in a rolling 24-hour window. (This proved to be the most critical indicator of lateral movement).
@@ -40,17 +40,20 @@ The analysis pipeline implements the following techniques to address the problem
 |-----------|-------------|
 | **Clustering and PCA** | Used PCA to reduce the 16-dimensional feature space to 2 components for visualization. Applied K-Means clustering to discover 3 natural behavioral groupings. |
 | **Feature Engineering** | Engineered rolling-window behavioral features (counts, ratios, velocities) from raw logs to capture historical patterns without overfitting. |
+| **Data Balancing (SMOTE)** | Applied Synthetic Minority Over-sampling Technique (SMOTE) to the training set to synthesize rare red team events and address the extreme class imbalance before model training. |
 | **Time Series Analysis** | Decomposed hourly event volume to model temporal trends (seasonality) and detected sudden deviations via rolling z-scores. |
-| **Model Selection & Regularization** | Compared models using 5-fold cross-validation. Tuned L1/L2 regularization for Logistic Regression to handle high-dimensional spaces and prevent overfitting. |
-| **Classification (KNN & Logistic Regression)** | Built baseline classifiers. Logistic Regression provided interpretable feature weights, while KNN attempted to capture local similarities. |
-| **Decision Trees** | Modeled nonlinear relationships to produce interpretable, human-readable rule sets for security analysts. |
+| **Model Selection & Hyperparameter Tuning** | Compared models using `GridSearchCV` with 5-fold cross-validation. Tuned L1/L2 regularization for Logistic Regression, max depth for Decision Trees, and estimators for Random Forest to handle high-dimensional spaces and prevent overfitting. |
+| **Classification (KNN, LR, RF, SVM)** | Built and evaluated baseline and advanced classifiers. |
+| **Model Interpretability (SHAP & Rules)** | Extracted human-readable rule sets from Decision Trees and used SHAP (SHapley Additive exPlanations) summary plots to explain the feature impact on model predictions. |
 
 ## 4. Model Evaluation & Conclusion
-I evaluated three different classification algorithms. Because of the extreme class imbalance, standard accuracy is a misleading metric—a model that hardcodes a "normal" response achieves 99.9% accuracy but is useless for security. Therefore, I optimized for ROC AUC and Recall.
+I evaluated five different classification algorithms. Because of the extreme class imbalance, standard accuracy is a misleading metric—a model that hardcodes a "normal" response achieves 99.9% accuracy but is useless for security. By applying SMOTE to balance the training data, I optimized for ROC AUC and Recall.
 
 *   **K-Nearest Neighbors (KNN)**: Achieved 99.90% accuracy, but failed fundamentally at the actual task, yielding only 14.29% recall and an AUC of 0.8088. It essentially defaulted to predicting the majority class.
 *   **Logistic Regression**: Showed significant improvement. By applying balanced class weights, it achieved an AUC of 0.9529 and a recall of 88.57%. The overall accuracy dropped to 89.01%, which is an acceptable trade-off for catching the minority class.
-*   **Decision Tree**: Emerged as the strongest performer. It achieved the highest AUC score of 0.9571, with a solid recall of 83.57% and an accuracy of 91.74%. 
+*   **Support Vector Machine (SVM)**: Offered strong linear separation in the high-dimensional feature space, performing similarly to Logistic Regression.
+*   **Random Forest**: Provided robust ensemble performance, handling the non-linear behavioral features effectively while resisting overfitting. It balances high accuracy with a reasonable train time.
+*   **Decision Tree**: Emerged as the strongest performer. It achieved the highest AUC score of 0.9571, with a solid recall of 83.57% and an accuracy of 91.74%. Additionally, it boasts an exceptionally fast train time (typically under a few seconds), making it highly efficient for rapid retraining on new data. 
 
 ### Architectural Decision: The Best Model
 I selected the **Decision Tree** (tuned to a max depth of 7) as the optimal model for this use case. 

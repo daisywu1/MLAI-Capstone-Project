@@ -83,7 +83,7 @@ def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  Computing time-since-last-login...")
     df['prev_time'] = df.groupby('src_user')['time'].shift(1)
-    df['time_since_last_login'] = (df['time'] - df['prev_time']).fillna(0).clip(lower=0)
+    df['time_since_last_login'] = (df['time'] - df['prev_time']).fillna(0).clip(lower=0, upper=604800)
 
     print("  Computing new-destination flag...")
     seen_pairs = set()
@@ -109,7 +109,7 @@ def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
             df[c] = 0
 
     result = df[keep_cols].copy()
-    result = result.fillna(0)
+    result = result.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     print(f"  Feature matrix: {result.shape[0]:,} rows × {result.shape[1]} columns")
     print(f"  Suspicious events: {result[TARGET_COLUMN].sum():,} "
