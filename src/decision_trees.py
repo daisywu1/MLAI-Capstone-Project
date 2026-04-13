@@ -5,8 +5,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.tree import DecisionTreeClassifier, export_text, plot_tree
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from src.utils import IMAGES_DIR
 
@@ -30,7 +28,7 @@ def tune_tree_depth(X_train, y_train, max_depth_range=range(2, 16), cv=5):
     cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42) if cv >= 2 else None
 
     for depth in max_depth_range:
-        dt = make_pipeline(StandardScaler(), DecisionTreeClassifier(max_depth=depth, random_state=42, class_weight='balanced'))
+        dt = DecisionTreeClassifier(max_depth=depth, random_state=42, class_weight='balanced')
         if cv_strategy:
             try:
                 scores = cross_val_score(dt, X_train, y_train, cv=cv_strategy,
@@ -75,7 +73,7 @@ def tune_tree_depth(X_train, y_train, max_depth_range=range(2, 16), cv=5):
 
 def train_decision_tree(X_train, y_train, max_depth=5):
     """Train a decision tree classifier."""
-    dt = make_pipeline(StandardScaler(), DecisionTreeClassifier(max_depth=max_depth, random_state=42, class_weight='balanced'))
+    dt = DecisionTreeClassifier(max_depth=max_depth, random_state=42, class_weight='balanced')
     dt.fit(X_train, y_train)
     print(f"  Trained Decision Tree (max_depth={max_depth})")
     return dt
