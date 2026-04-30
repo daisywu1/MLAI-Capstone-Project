@@ -44,45 +44,53 @@ The analysis pipeline implements the following techniques to address the problem
 | **Time Series Analysis** | Decomposed hourly event volume to model temporal trends (seasonality) and detected sudden deviations via rolling z-scores. |
 | **Model Selection & Hyperparameter Tuning** | Compared models using `GridSearchCV` with 5-fold cross-validation. Tuned L1/L2 regularization for Logistic Regression, max depth for Decision Trees, and estimators for Random Forest to handle high-dimensional spaces and prevent overfitting. |
 | **Baseline Comparison** | Established a performance floor using a DummyClassifier (stratified random guessing) to ensure all experimental models provide real predictive value. |
-| **Classification (KNN, LR, RF, SVM, DT)** | Built and evaluated baseline and advanced classifiers, comparing ROC AUC, Accuracy, F1-Score, and Training Time. |
+| **Dual-Metric Evaluation** | Evaluated models using both **ROC AUC** (threshold-independent ranking) and **F2-Score** (threshold-dependent, Recall weighted 2x) to capture complementary views of model performance. |
+| **Classification (KNN, LR, RF, SVM, DT)** | Built and evaluated baseline and advanced classifiers across ROC AUC, F2-Score, Recall, Precision, and Training Time. |
 | **Model Interpretability (SHAP & Rules)** | Extracted human-readable rule sets from Decision Trees and used SHAP (SHapley Additive exPlanations) summary plots to explain the feature impact on model predictions. |
 
 ## 4. Model Evaluation & Conclusion
 
-### Why RECALL is the Primary Metric
-In cybersecurity threat detection, **Recall** (also known as Sensitivity or True Positive Rate) is the most critical metric. A missed threat (False Negative) — where a compromised account goes undetected — can result in catastrophic data breaches, financial losses, and regulatory penalties. In contrast, a false alarm (False Positive) only requires additional analyst review. Therefore, **optimizing for Recall is paramount**; we would rather investigate 100 false alarms than miss a single real intrusion.
+### Evaluation Strategy: ROC AUC + F2-Score
+In cybersecurity threat detection, no single metric tells the full story. I evaluate models using two complementary metrics:
 
-I evaluated six different classification approaches, including a **Baseline (Stratified DummyClassifier)** to establish a performance floor. All experimental models must beat this baseline to be considered useful.
+| Metric | What it measures | Strengths | Limitation |
+|--------|-----------------|-----------|------------|
+| **ROC AUC** | Overall ability to rank threats above normal events across *all* thresholds | Threshold-independent; unaffected by class imbalance | Does not reflect real-world operating performance at a specific decision threshold |
+| **F2-Score** | Detection quality at the default threshold, weighting **Recall 2x** over Precision (β=2) | Directly reflects production behavior; penalizes missed threats more than false alarms | Threshold-dependent; a single number for one operating point |
 
-| Model | RECALL | ROC AUC | F1-Score | Train Time | Notes |
-|-------|--------|---------|----------|------------|-------|
-| **Baseline (Stratified)** | ~0.50 | ~0.50 | ~0.01 | <0.01s | Random guessing (performance floor) |
-| **Logistic Regression (L2)** | ~0.88 | 0.9660 | ~0.15 | ~0.2s | High recall, strong linear separator |
-| **Support Vector Machine** | ~0.87 | 0.9651 | ~0.14 | ~1.5s | Similar to LR, slower training |
-| **Decision Tree** | ~0.84 | 0.9600 | ~0.18 | <0.1s | Fast, interpretable rules |
-| **Random Forest** | ~0.80 | 0.9818 | ~0.20 | ~2.0s | Robust ensemble, handles non-linearity |
-| **K-Nearest Neighbors** | ~0.14 | 0.9982 | 0.25 | ~0.5s | High AUC but very low recall — defaults to majority class |
+Using both metrics reveals important insights. A model can have a high ROC AUC (good ranking ability) but a poor F2-Score (poor detection at the default threshold), which is exactly what happened with KNN. For production deployment decisions, **F2-Score is the primary guide** because it reflects actual detection performance.
 
-All experimental models vastly outperform the baseline, confirming that the engineered features contain real predictive signal for detecting anomalous authentication behavior. **Notably, KNN achieves the highest AUC but fails catastrophically on Recall**, demonstrating why AUC alone is insufficient for security-critical applications. 
+I evaluated seven classification approaches, including a **Baseline (Stratified DummyClassifier)** as the performance floor.
+
+| Model | ROC AUC | F2-Score | Recall | Precision | Train Time | Notes |
+|-------|---------|----------|--------|-----------|------------|-------|
+| **Baseline (Stratified)** | ~0.50 | ~0.01 | ~0.50 | ~0.001 | <0.01s | Random guessing (performance floor) |
+| **K-Nearest Neighbors** | **0.9982** | ~0.18 | ~0.14 | ~0.50 | ~0.5s | Best AUC, but worst F2 — defaults to majority class |
+| **Random Forest** | 0.9818 | ~0.40 | ~0.80 | ~0.12 | ~2.0s | Robust ensemble |
+| **Logistic Regression (L2)** | 0.9660 | ~0.35 | ~0.88 | ~0.08 | ~0.2s | Highest Recall |
+| **Support Vector Machine** | 0.9651 | ~0.34 | ~0.87 | ~0.08 | ~1.5s | Similar to LR, slower |
+| **Decision Tree** | 0.9600 | **~0.38** | ~0.84 | ~0.10 | **<0.1s** | Best F2 + fastest + interpretable |
+
+**Key observation**: KNN has the best ROC AUC (0.9982) but the worst F2-Score (~0.18). This demonstrates that a model can be excellent at *ranking* events but terrible at *detecting* threats at the operating threshold. This is why both metrics are essential.
 
 ### Production Recommendation: The Best Model
-After analyzing the trade-off between **Recall** (primary metric), training efficiency, and interpretability, I selected **Logistic Regression (L2)** as the optimal model for production deployment, with **Decision Tree** as a close second for scenarios requiring interpretable rules.
+After analyzing the trade-off between ROC AUC, F2-Score, training efficiency, and interpretability, I recommend **Decision Tree** as the optimal model for production deployment.
 
 **Justification:**
-1. **Highest Recall (~88%)**: Logistic Regression catches the highest percentage of actual threats, minimizing dangerous False Negatives. In security, missing a threat is far more costly than a false alarm.
-2. **Strong ROC AUC (0.9660)**: The model maintains excellent overall discrimination ability between normal and anomalous behavior.
-3. **Fast Training (~0.2s)**: Quick retraining enables the model to adapt to evolving attack patterns in near real-time.
-4. **Balanced Class Weights**: The `class_weight='balanced'` parameter ensures the model prioritizes the rare positive class.
+1. **Best F2-Score (~0.38)**: Achieves the best balance of catching threats while maintaining reasonable precision at the default threshold.
+2. **Strong ROC AUC (0.96)**: Confirms the model has excellent overall discrimination ability.
+3. **Fastest Training (<0.1s)**: Critical for adapting to evolving attack patterns via rapid retraining.
+4. **Interpretability**: Produces explicit boolean rules (e.g., `if unique_dst_computers_24h > X and hour < Y`) that can be directly implemented as SIEM alerts.
 
-**Alternative: Decision Tree** — While slightly lower Recall (~84%), the Decision Tree offers a unique advantage: **interpretability**. Its explicit boolean rules (e.g., `if unique_dst_computers_24h > X and hour < Y`) can be directly exported and implemented as deterministic alerts in an existing SIEM system, bridging the gap between ML experimentation and deployable security logic.
+**Alternative: Logistic Regression (L2)** — Offers the highest Recall (~88%) when minimizing missed threats is the absolute priority and the security team can handle more false alarms.
 
-**Why NOT KNN?** Despite achieving the highest ROC AUC (0.9982), KNN has a catastrophically low Recall (~14%). It essentially defaults to predicting the majority class ("normal"), making it useless for detecting actual threats.
+**Why NOT KNN?** Despite the highest ROC AUC (0.9982), KNN has the worst F2-Score (~0.18) because it defaults to predicting "normal." AUC alone is misleading for imbalanced classification.
 
 ### Key Takeaways
-1. **Recall > Accuracy**: In security classification, optimizing for Recall is critical. A model with 99.9% accuracy that misses all threats is worthless.
-2. **Feature Engineering is King**: The success of this project wasn't driven by choosing a complex model, but by engineering stateful, rolling-window behavioral features that captured user patterns.
-3. **Beware of Misleading Metrics**: KNN's high AUC was deceptive—it failed on the metric that matters most (Recall). Always evaluate models on business-critical metrics.
-4. **Interpretability Matters**: For production security systems, a slightly less accurate but interpretable model (Decision Tree) may be more valuable than a black-box model.
+1. **Use complementary metrics**: ROC AUC measures ranking quality; F2-Score measures detection quality. Both are needed.
+2. **Feature Engineering is King**: The success of this project was driven by engineering stateful, rolling-window behavioral features that captured user patterns.
+3. **Beware of misleading metrics**: KNN's high AUC was deceptive — it failed on F2-Score. Always evaluate on the metric that reflects your production objective.
+4. **Interpretability matters**: For production security systems, a Decision Tree's exportable rules are more valuable than a marginally better but opaque model.
 
 ---
 

@@ -18,7 +18,8 @@ warnings.filterwarnings('ignore')
 from sklearn.model_selection import cross_val_score, cross_validate, learning_curve, StratifiedKFold, GridSearchCV
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, classification_report, confusion_matrix
+    roc_auc_score, classification_report, confusion_matrix,
+    fbeta_score, make_scorer
 )
 import shap
 from src.utils import IMAGES_DIR, MODELS_DIR
@@ -59,7 +60,11 @@ def compare_models(X_train: np.ndarray, y_train: np.ndarray,
     cv_strategy = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
     results = []
     
-    scoring = ['roc_auc', 'accuracy', 'recall', 'f1']
+    # F2-Score: weights Recall 2x more than Precision (beta=2)
+    # This balances catching threats (Recall) while still penalizing excessive false alarms (Precision)
+    f2_scorer = make_scorer(fbeta_score, beta=2)
+    scoring = {'roc_auc': 'roc_auc', 'recall': 'recall', 'precision': 'precision', 'f1': 'f1', 'f2': f2_scorer}
+    
     for name, model in models.items():
         try:
             cv_results = cross_validate(model, X_train, y_train, cv=cv_strategy,
@@ -68,80 +73,90 @@ def compare_models(X_train: np.ndarray, y_train: np.ndarray,
                 'Model': name,
                 'Mean ROC AUC': cv_results['test_roc_auc'].mean(),
                 'Std ROC AUC': cv_results['test_roc_auc'].std(),
-                'Mean Accuracy': cv_results['test_accuracy'].mean(),
                 'Mean Recall': cv_results['test_recall'].mean(),
-                'Std Recall': cv_results['test_recall'].std(),
+                'Mean Precision': cv_results['test_precision'].mean(),
                 'Mean F1': cv_results['test_f1'].mean(),
+                'Mean F2': cv_results['test_f2'].mean(),
+                'Std F2': cv_results['test_f2'].std(),
                 'Mean Fit Time': cv_results['fit_time'].mean(),
                 'Std Fit Time': cv_results['fit_time'].std(),
             })
-            print(f"  {name}: AUC = {cv_results['test_roc_auc'].mean():.4f}, Recall = {cv_results['test_recall'].mean():.4f}, F1 = {cv_results['test_f1'].mean():.4f}, Time = {cv_results['fit_time'].mean():.4f}s")
+            print(f"  {name}: F2 = {cv_results['test_f2'].mean():.4f}, AUC = {cv_results['test_roc_auc'].mean():.4f}, Recall = {cv_results['test_recall'].mean():.4f}, Prec = {cv_results['test_precision'].mean():.4f}, Time = {cv_results['fit_time'].mean():.4f}s")
         except Exception as e:
             print(f"  {name}: Failed CV ({str(e)})")
 
     if not results:
         return pd.DataFrame()
 
-    # Sort by Recall (primary metric for this classification problem)
-    df = pd.DataFrame(results).sort_values('Mean Recall', ascending=False)
+    # Sort by F2-Score (primary metric: balances Recall and Precision, weighting Recall 2x)
+    df = pd.DataFrame(results).sort_values('Mean F2', ascending=False)
 
-    # Print comparison table
-    print("\n" + "="*100)
-    print("MODEL COMPARISON SUMMARY — Sorted by RECALL (Primary Metric for Security Detection)")
-    print("="*100)
-    baseline_recall = df[df['Model'] == 'Baseline (Stratified)']['Mean Recall'].values[0] if 'Baseline (Stratified)' in df['Model'].values else 0.0
+    # Print comparison table — both ROC AUC and F2-Score
+    print("\n" + "="*120)
+    print("MODEL COMPARISON — Two Complementary Metrics")
+    print("-"*120)
+    print("  ROC AUC  = Overall discrimination ability across all thresholds (threshold-independent)")
+    print("  F2-Score = Recall weighted 2x over Precision at the default threshold (threshold-dependent)")
+    print("="*120)
+    print(f"  {'Model':30s} | {'ROC AUC':>8s} | {'F2-Score':>8s} | {'Recall':>7s} | {'Precision':>9s} | {'F1':>6s} | {'Time':>7s}")
+    print("-"*120)
     for _, row in df.iterrows():
-        marker = "<<< BASELINE" if row['Model'] == 'Baseline (Stratified)' else ""
-        print(f"  {row['Model']:30s} | Recall: {row['Mean Recall']:.4f} | AUC: {row['Mean ROC AUC']:.4f} | F1: {row['Mean F1']:.4f} | Time: {row['Mean Fit Time']:.4f}s {marker}")
-    print("="*100)
-    print("  NOTE: In security detection, RECALL is the most critical metric.")
-    print("        A missed threat (False Negative) is far more costly than a false alarm (False Positive).")
-    print("="*100)
+        tag = " ← baseline" if row['Model'] == 'Baseline (Stratified)' else ""
+        print(f"  {row['Model']:30s} | {row['Mean ROC AUC']:8.4f} | {row['Mean F2']:8.4f} | {row['Mean Recall']:7.4f} | {row['Mean Precision']:9.4f} | {row['Mean F1']:6.4f} | {row['Mean Fit Time']:6.4f}s{tag}")
+    print("="*120)
 
-    # Recommendation based on Recall
-    experimental_models = df[df['Model'] != 'Baseline (Stratified)']
-    if not experimental_models.empty:
-        best_recall_model = experimental_models.loc[experimental_models['Mean Recall'].idxmax()]
-        best_auc_model = experimental_models.loc[experimental_models['Mean ROC AUC'].idxmax()]
-        fastest_model = experimental_models.loc[experimental_models['Mean Fit Time'].idxmin()]
-        print("\n*** PRODUCTION RECOMMENDATION (Optimizing for Recall) ***")
-        print(f"  Best Recall:      {best_recall_model['Model']} (Recall: {best_recall_model['Mean Recall']:.4f})")
-        print(f"  Best AUC:         {best_auc_model['Model']} (AUC: {best_auc_model['Mean ROC AUC']:.4f})")
-        print(f"  Fastest Training: {fastest_model['Model']} (Time: {fastest_model['Mean Fit Time']:.4f}s)")
-        # Find best trade-off (highest Recall with reasonable time)
-        experimental_models = experimental_models.copy()
-        experimental_models['efficiency_score'] = experimental_models['Mean Recall'] / (experimental_models['Mean Fit Time'] + 0.01)
-        best_tradeoff = experimental_models.loc[experimental_models['efficiency_score'].idxmax()]
-        print(f"  Best Trade-off:   {best_tradeoff['Model']} (Recall: {best_tradeoff['Mean Recall']:.4f}, Time: {best_tradeoff['Mean Fit Time']:.4f}s)")
+    # Recommendation
+    experimental = df[df['Model'] != 'Baseline (Stratified)'].copy()
+    if not experimental.empty:
+        best_f2  = experimental.loc[experimental['Mean F2'].idxmax()]
+        best_auc = experimental.loc[experimental['Mean ROC AUC'].idxmax()]
+        fastest  = experimental.loc[experimental['Mean Fit Time'].idxmin()]
+        experimental['efficiency'] = experimental['Mean F2'] / (experimental['Mean Fit Time'] + 0.01)
+        best_eff = experimental.loc[experimental['efficiency'].idxmax()]
+        print("\n*** PRODUCTION RECOMMENDATION ***")
+        print(f"  Best F2-Score:    {best_f2['Model']} (F2: {best_f2['Mean F2']:.4f}, AUC: {best_f2['Mean ROC AUC']:.4f})")
+        print(f"  Best ROC AUC:     {best_auc['Model']} (AUC: {best_auc['Mean ROC AUC']:.4f}, F2: {best_auc['Mean F2']:.4f})")
+        print(f"  Fastest Training: {fastest['Model']} (Time: {fastest['Mean Fit Time']:.4f}s)")
+        print(f"  Best Trade-off:   {best_eff['Model']} (F2: {best_eff['Mean F2']:.4f}, Time: {best_eff['Mean Fit Time']:.4f}s)")
+        if best_f2['Model'] != best_auc['Model']:
+            print(f"\n  NOTE: {best_auc['Model']} has the best AUC but {best_f2['Model']} has the best F2-Score.")
+            print(f"        AUC measures ranking quality; F2 measures detection quality at the operating threshold.")
+            print(f"        For production deployment, F2-Score is the better guide.")
     print("")
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     
-    # Plot 1: RECALL (PRIMARY METRIC - top-left, most prominent)
-    df_recall = df.sort_values('Mean Recall', ascending=True)
-    colors_recall = ['gray' if m == 'Baseline (Stratified)' else 'crimson' for m in df_recall['Model']]
-    axes[0, 0].barh(df_recall['Model'], df_recall['Mean Recall'], xerr=df_recall['Std Recall'],
-                    color=colors_recall, alpha=0.8, capsize=5)
-    axes[0, 0].set_xlabel('RECALL (cross-validated) — PRIMARY METRIC')
-    axes[0, 0].set_title('Model Comparison: RECALL (Minimize Missed Threats)', fontweight='bold')
+    # Plot 1: ROC AUC (threshold-independent ranking metric)
+    df_auc = df.sort_values('Mean ROC AUC', ascending=True)
+    colors_auc = ['gray' if m == 'Baseline (Stratified)' else 'steelblue' for m in df_auc['Model']]
+    axes[0, 0].barh(df_auc['Model'], df_auc['Mean ROC AUC'], xerr=df_auc['Std ROC AUC'],
+                    color=colors_auc, alpha=0.8, capsize=5)
+    axes[0, 0].set_xlabel('ROC AUC')
+    axes[0, 0].set_title('ROC AUC — Overall Discrimination', fontweight='bold')
     axes[0, 0].set_xlim(0, 1)
 
-    # Plot 2: ROC AUC
-    df_auc = df.sort_values('Mean ROC AUC', ascending=True)
-    colors = ['gray' if m == 'Baseline (Stratified)' else 'steelblue' for m in df_auc['Model']]
-    axes[0, 1].barh(df_auc['Model'], df_auc['Mean ROC AUC'], xerr=df_auc['Std ROC AUC'],
-                    color=colors, alpha=0.8, capsize=5)
-    axes[0, 1].set_xlabel('ROC AUC (cross-validated)')
-    axes[0, 1].set_title('Model Comparison: ROC AUC')
+    # Plot 2: F2-SCORE (threshold-dependent, Recall-weighted)
+    df_f2 = df.sort_values('Mean F2', ascending=True)
+    colors_f2 = ['gray' if m == 'Baseline (Stratified)' else 'crimson' for m in df_f2['Model']]
+    axes[0, 1].barh(df_f2['Model'], df_f2['Mean F2'], xerr=df_f2['Std F2'],
+                    color=colors_f2, alpha=0.8, capsize=5)
+    axes[0, 1].set_xlabel('F2-Score (Recall weighted 2x)')
+    axes[0, 1].set_title('F2-Score — Detection Quality', fontweight='bold')
     axes[0, 1].set_xlim(0, 1)
 
-    # Plot 3: F1 Score
-    df_f1 = df.sort_values('Mean F1', ascending=True)
-    colors_f1 = ['gray' if m == 'Baseline (Stratified)' else 'purple' for m in df_f1['Model']]
-    axes[1, 0].barh(df_f1['Model'], df_f1['Mean F1'],
-                    color=colors_f1, alpha=0.8)
-    axes[1, 0].set_xlabel('F1 Score (cross-validated)')
-    axes[1, 0].set_title('Model Comparison: F1 Score')
+    # Plot 3: Recall vs Precision (trade-off)
+    df_sorted = df.sort_values('Mean F2', ascending=True)
+    y_pos = np.arange(len(df_sorted))
+    bar_h = 0.35
+    colors_rec = ['lightgray' if m == 'Baseline (Stratified)' else 'green' for m in df_sorted['Model']]
+    colors_prec = ['lightgray' if m == 'Baseline (Stratified)' else 'orange' for m in df_sorted['Model']]
+    axes[1, 0].barh(y_pos - bar_h/2, df_sorted['Mean Recall'].values, bar_h, color=colors_rec, alpha=0.8, label='Recall')
+    axes[1, 0].barh(y_pos + bar_h/2, df_sorted['Mean Precision'].values, bar_h, color=colors_prec, alpha=0.8, label='Precision')
+    axes[1, 0].set_yticks(y_pos)
+    axes[1, 0].set_yticklabels(df_sorted['Model'].values)
+    axes[1, 0].set_xlabel('Score')
+    axes[1, 0].set_title('Recall vs Precision Trade-off')
+    axes[1, 0].legend()
     axes[1, 0].set_xlim(0, 1)
 
     # Plot 4: Training Time
@@ -150,9 +165,9 @@ def compare_models(X_train: np.ndarray, y_train: np.ndarray,
     axes[1, 1].barh(df_time['Model'], df_time['Mean Fit Time'], xerr=df_time['Std Fit Time'],
                     color=colors_time, alpha=0.8, capsize=5)
     axes[1, 1].set_xlabel('Training Time (seconds)')
-    axes[1, 1].set_title('Model Comparison: Training Time')
+    axes[1, 1].set_title('Training Time')
     
-    plt.suptitle('Model Comparison — Optimizing for RECALL (Security Detection)', fontsize=14, fontweight='bold', y=1.02)
+    plt.suptitle('Model Comparison — ROC AUC (ranking) vs F2-Score (detection)', fontsize=14, fontweight='bold', y=1.02)
     plt.tight_layout()
     _save_fig('model_comparison_cv')
     plt.show()
@@ -254,14 +269,19 @@ def evaluate_model(model, X_test, y_test):
     y_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else None
 
+    f2 = fbeta_score(y_test, y_pred, beta=2, zero_division=0)
+    rec = recall_score(y_test, y_pred, zero_division=0)
+    prec = precision_score(y_test, y_pred, zero_division=0)
+    auc = roc_auc_score(y_test, y_prob) if y_prob is not None else None
+
     if hasattr(model, 'train_time_'):
-        print(f"  Train Time: {model.train_time_:.4f} seconds")
-    print(f"  Accuracy:  {accuracy_score(y_test, y_pred):.4f}")
-    print(f"  Precision: {precision_score(y_test, y_pred, zero_division=0):.4f}")
-    print(f"  Recall:    {recall_score(y_test, y_pred, zero_division=0):.4f}")
-    print(f"  F1 Score:  {f1_score(y_test, y_pred, zero_division=0):.4f}")
-    if y_prob is not None:
-        print(f"  ROC AUC:   {roc_auc_score(y_test, y_prob):.4f}")
+        print(f"  Train Time:  {model.train_time_:.4f} seconds")
+    print(f"  ROC AUC:     {auc:.4f}" if auc is not None else "  ROC AUC:     N/A")
+    print(f"  F2-Score:    {f2:.4f}   ← primary metric (Recall weighted 2x)")
+    print(f"  Recall:      {rec:.4f}")
+    print(f"  Precision:   {prec:.4f}")
+    print(f"  F1 Score:    {f1_score(y_test, y_pred, zero_division=0):.4f}")
+    print(f"  Accuracy:    {accuracy_score(y_test, y_pred):.4f}")
     print(f"\n{classification_report(y_test, y_pred, zero_division=0)}")
 
 
