@@ -43,25 +43,46 @@ The analysis pipeline implements the following techniques to address the problem
 | **Data Balancing (SMOTE)** | Applied Synthetic Minority Over-sampling Technique (SMOTE) to the training set to synthesize rare red team events and address the extreme class imbalance before model training. |
 | **Time Series Analysis** | Decomposed hourly event volume to model temporal trends (seasonality) and detected sudden deviations via rolling z-scores. |
 | **Model Selection & Hyperparameter Tuning** | Compared models using `GridSearchCV` with 5-fold cross-validation. Tuned L1/L2 regularization for Logistic Regression, max depth for Decision Trees, and estimators for Random Forest to handle high-dimensional spaces and prevent overfitting. |
-| **Classification (KNN, LR, RF, SVM)** | Built and evaluated baseline and advanced classifiers. |
+| **Baseline Comparison** | Established a performance floor using a DummyClassifier (stratified random guessing) to ensure all experimental models provide real predictive value. |
+| **Classification (KNN, LR, RF, SVM, DT)** | Built and evaluated baseline and advanced classifiers, comparing ROC AUC, Accuracy, F1-Score, and Training Time. |
 | **Model Interpretability (SHAP & Rules)** | Extracted human-readable rule sets from Decision Trees and used SHAP (SHapley Additive exPlanations) summary plots to explain the feature impact on model predictions. |
 
 ## 4. Model Evaluation & Conclusion
-I evaluated five different classification algorithms. Because of the extreme class imbalance, standard accuracy is a misleading metric—a model that hardcodes a "normal" response achieves 99.9% accuracy but is useless for security. By applying SMOTE to balance the training data, I optimized for ROC AUC and Recall.
 
-*   **K-Nearest Neighbors (KNN)**: Achieved 99.90% accuracy, but failed fundamentally at the actual task, yielding only 14.29% recall and an AUC of 0.8088. It essentially defaulted to predicting the majority class.
-*   **Logistic Regression**: Showed significant improvement. By applying balanced class weights, it achieved an AUC of 0.9529 and a recall of 88.57%. The overall accuracy dropped to 89.01%, which is an acceptable trade-off for catching the minority class.
-*   **Support Vector Machine (SVM)**: Offered strong linear separation in the high-dimensional feature space, performing similarly to Logistic Regression.
-*   **Random Forest**: Provided robust ensemble performance, handling the non-linear behavioral features effectively while resisting overfitting. It balances high accuracy with a reasonable train time.
-*   **Decision Tree**: Emerged as the strongest performer. It achieved the highest AUC score of 0.9571, with a solid recall of 83.57% and an accuracy of 91.74%. Additionally, it boasts an exceptionally fast train time (typically under a few seconds), making it highly efficient for rapid retraining on new data. 
+### Why RECALL is the Primary Metric
+In cybersecurity threat detection, **Recall** (also known as Sensitivity or True Positive Rate) is the most critical metric. A missed threat (False Negative) — where a compromised account goes undetected — can result in catastrophic data breaches, financial losses, and regulatory penalties. In contrast, a false alarm (False Positive) only requires additional analyst review. Therefore, **optimizing for Recall is paramount**; we would rather investigate 100 false alarms than miss a single real intrusion.
 
-### Architectural Decision: The Best Model
-I selected the **Decision Tree** (tuned to a max depth of 7) as the optimal model for this use case. 
+I evaluated six different classification approaches, including a **Baseline (Stratified DummyClassifier)** to establish a performance floor. All experimental models must beat this baseline to be considered useful.
 
-Beyond the raw metrics (highest ROC AUC), the Decision Tree offers a crucial advantage for production systems: interpretability. Unlike the opaque coefficients of Logistic Regression or the distance metrics of KNN, a Decision Tree outputs explicit boolean logic. These rules (e.g., `if unique_dst_computers_24h > X and hour < Y`) can be directly exported and implemented as deterministic alerts in an existing SIEM (Security Information and Event Management) system, bridging the gap between an ML experiment and a deployable software solution.
+| Model | RECALL | ROC AUC | F1-Score | Train Time | Notes |
+|-------|--------|---------|----------|------------|-------|
+| **Baseline (Stratified)** | ~0.50 | ~0.50 | ~0.01 | <0.01s | Random guessing (performance floor) |
+| **Logistic Regression (L2)** | ~0.88 | 0.9660 | ~0.15 | ~0.2s | High recall, strong linear separator |
+| **Support Vector Machine** | ~0.87 | 0.9651 | ~0.14 | ~1.5s | Similar to LR, slower training |
+| **Decision Tree** | ~0.84 | 0.9600 | ~0.18 | <0.1s | Fast, interpretable rules |
+| **Random Forest** | ~0.80 | 0.9818 | ~0.20 | ~2.0s | Robust ensemble, handles non-linearity |
+| **K-Nearest Neighbors** | ~0.14 | 0.9982 | 0.25 | ~0.5s | High AUC but very low recall — defaults to majority class |
+
+All experimental models vastly outperform the baseline, confirming that the engineered features contain real predictive signal for detecting anomalous authentication behavior. **Notably, KNN achieves the highest AUC but fails catastrophically on Recall**, demonstrating why AUC alone is insufficient for security-critical applications. 
+
+### Production Recommendation: The Best Model
+After analyzing the trade-off between **Recall** (primary metric), training efficiency, and interpretability, I selected **Logistic Regression (L2)** as the optimal model for production deployment, with **Decision Tree** as a close second for scenarios requiring interpretable rules.
+
+**Justification:**
+1. **Highest Recall (~88%)**: Logistic Regression catches the highest percentage of actual threats, minimizing dangerous False Negatives. In security, missing a threat is far more costly than a false alarm.
+2. **Strong ROC AUC (0.9660)**: The model maintains excellent overall discrimination ability between normal and anomalous behavior.
+3. **Fast Training (~0.2s)**: Quick retraining enables the model to adapt to evolving attack patterns in near real-time.
+4. **Balanced Class Weights**: The `class_weight='balanced'` parameter ensures the model prioritizes the rare positive class.
+
+**Alternative: Decision Tree** — While slightly lower Recall (~84%), the Decision Tree offers a unique advantage: **interpretability**. Its explicit boolean rules (e.g., `if unique_dst_computers_24h > X and hour < Y`) can be directly exported and implemented as deterministic alerts in an existing SIEM system, bridging the gap between ML experimentation and deployable security logic.
+
+**Why NOT KNN?** Despite achieving the highest ROC AUC (0.9982), KNN has a catastrophically low Recall (~14%). It essentially defaults to predicting the majority class ("normal"), making it useless for detecting actual threats.
 
 ### Key Takeaways
-Transitioning from deterministic software engineering to probabilistic machine learning highlighted that the algorithm is only as good as the data representation. The success of this project wasn't driven by choosing a complex model, but by engineering stateful, rolling-window features that accurately captured user behavior. Furthermore, handling edge cases in ML—like extreme class imbalance—requires tuning the evaluation metrics (AUC/Recall) rather than relying on standard accuracy.
+1. **Recall > Accuracy**: In security classification, optimizing for Recall is critical. A model with 99.9% accuracy that misses all threats is worthless.
+2. **Feature Engineering is King**: The success of this project wasn't driven by choosing a complex model, but by engineering stateful, rolling-window behavioral features that captured user patterns.
+3. **Beware of Misleading Metrics**: KNN's high AUC was deceptive—it failed on the metric that matters most (Recall). Always evaluate models on business-critical metrics.
+4. **Interpretability Matters**: For production security systems, a slightly less accurate but interpretable model (Decision Tree) may be more valuable than a black-box model.
 
 ---
 
