@@ -2,6 +2,11 @@
 
 **AI/ML Capstone Project — Daisy Wu**
 
+> **Documentation:**  
+> - [README.md](README.md) — Project overview and quick start (this file)  
+> - [FINAL_ANALYSIS_REPORT.md](FINAL_ANALYSIS_REPORT.md) — Detailed final analysis report  
+> - [project_problem_statement.md](project_problem_statement.md) — Original problem statement  
+
 ## About the Author
 Hi, I'm Daisy Wu. I am a software engineer with over 20 years of experience in application development. I currently work for a cybersecurity company, which inspired me to choose this specific domain for my AI/ML capstone project. You can connect with me or view my professional background on [LinkedIn](https://www.linkedin.com/in/hire-daisy-wu/).
 
@@ -111,7 +116,8 @@ Running the entire Jupyter notebook pipeline end-to-end (`Kernel → Restart & R
 ```
 MLAI-Capstone-Project/
 ├── README.md                              # This file
-├── DAISY_WU_AI_ML_Capstone_Project.md     # Problem statement
+├── FINAL_ANALYSIS_REPORT.md               # Detailed final analysis report
+├── project_problem_statement.md           # Original problem statement
 ├── requirements.txt                       # Python dependencies
 ├── notebooks/
 │   └── capstone_analysis.ipynb            # Main analysis notebook (run this)
