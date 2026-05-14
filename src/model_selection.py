@@ -236,9 +236,10 @@ def tune_regularization(X_train: np.ndarray, y_train: np.ndarray,
 def plot_learning_curve(model, X_train, y_train, title: str):
     """Plot learning curve (train vs. validation score vs. training size)."""
     warnings.filterwarnings('ignore')
+    
     train_sizes, train_scores, val_scores = learning_curve(
         model, X_train, y_train, cv=5, scoring='roc_auc',
-        train_sizes=np.linspace(0.1, 1.0, 10), n_jobs=-1
+        train_sizes=np.linspace(0.3, 1.0, 8), n_jobs=1
     )
 
     fig, ax = plt.subplots(figsize=(10, 5))

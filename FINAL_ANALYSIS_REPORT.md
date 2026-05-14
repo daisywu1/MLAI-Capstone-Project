@@ -84,14 +84,13 @@ Raw log fields were transformed into 16 behavioral features:
 ### Data Balancing
 - **SMOTE** (Synthetic Minority Over-sampling Technique): Synthesized minority class examples in training set to address extreme class imbalance
 
-### Supervised Learning Models
-| Model | Hyperparameter Tuning |
-|-------|----------------------|
-| Logistic Regression (L1/L2) | C parameter via GridSearchCV |
-| K-Nearest Neighbors | k via elbow method |
-| Decision Tree | max_depth via GridSearchCV |
-| Random Forest | n_estimators, max_depth via GridSearchCV |
-| Support Vector Machine | C via GridSearchCV |
+### Supervised Learning Models & Hyperparameter Tuning
+Hyperparameters were tuned via `GridSearchCV` using 5-fold cross-validation:
+| Model | Parameter Grid | Rationale |
+|-------|----------------|-----------|
+| Logistic Regression / SVM | `C`: [0.01, 0.1, 1, 10] | `C` controls regularization. Smaller values enforce stronger regularization to prevent overfitting on noisy logs, while larger values allow closer data fitting. |
+| Decision Tree | `max_depth`: [3, 5, 7, 10] | Balances interpretability (shallow trees) against capturing complex behavioral patterns (deeper trees). |
+| Random Forest | `n_estimators`: [50, 100], `max_depth`: [5, 10] | `n_estimators` balances ensemble robustness against training elapsed time. `max_depth` limits individual tree complexity. |
 
 ### Model Evaluation Strategy
 **Dual-metric approach:**
@@ -109,26 +108,28 @@ Both metrics are necessary because a model can have excellent ranking (high AUC)
 
 ## 4. Results
 
-### Model Comparison
+### Model Comparison (True Test Set Performance)
 
 | Model | ROC AUC | F2-Score | Recall | Precision | Train Time |
 |-------|---------|----------|--------|-----------|------------|
-| **Baseline (Random)** | 0.50 | 0.01 | 0.50 | 0.001 | <0.01s |
-| K-Nearest Neighbors | **0.9982** | 0.18 | 0.14 | 0.50 | ~0.5s |
-| Random Forest | 0.9818 | 0.40 | 0.80 | 0.12 | ~2.0s |
-| Logistic Regression (L2) | 0.9660 | 0.35 | 0.88 | 0.08 | ~0.2s |
-| Support Vector Machine | 0.9651 | 0.34 | 0.87 | 0.08 | ~1.5s |
-| **Decision Tree** | 0.9600 | **0.38** | 0.84 | 0.10 | **<0.1s** |
+| **Baseline (Random)** | ~0.50 | ~0.00 | ~0.50 | <0.01 | <0.01s |
+| K-Nearest Neighbors | 0.8462 | **0.2771** | 0.6500 | **0.0841** | **~0.02s** |
+| Random Forest | **0.9786** | 0.1849 | 0.8357 | 0.0449 | ~12.2s |
+| Logistic Regression | 0.9522 | 0.0434 | **0.8786** | 0.0090 | ~0.8s |
+| Decision Tree | 0.9275 | 0.1478 | 0.7214 | 0.0354 | ~3.7s |
+| Support Vector Machine| N/A | 0.0429 | 0.8786 | 0.0089 | ~1.1s |
 
 ### Key Observations
 
-1. **All models vastly outperform the baseline**, confirming the engineered features contain real predictive signal.
+1. **Test Set vs. Cross-Validation**: Evaluating on a pristine test set (unaffected by SMOTE over-sampling) reveals the true difficulty of the extreme class imbalance (0.1%). Linear models like Logistic Regression achieve great Recall (88%) but abysmal Precision (<1%).
 
-2. **KNN has the best AUC (0.9982) but the worst F2-Score (0.18)**. This demonstrates that excellent ranking ability does not guarantee good detection performance. KNN defaults to predicting "normal" for most events.
+2. **KNN has the best F2-Score (0.277)**. It strikes the best out-of-the-box balance by maintaining the highest Precision (8.4%), meaning it limits the false alarm rate to an acceptable level while catching 65% of threats.
 
-3. **Decision Tree provides the best balance**: Strong F2-Score (0.38), fastest training (<0.1s), and interpretable rules.
+3. **Random Forest is the most robust overall**: Highest AUC (0.978) and strong Recall (83.5%). Its ranking capability is unmatched, meaning its threshold can be easily tuned to optimize the F2-Score for production.
 
-4. **Logistic Regression has the highest Recall (88%)** — best choice when minimizing missed threats is the absolute priority.
+4. **Training Elapsed Time vs Robustness**: The time it takes to train a model heavily impacts its viability in production. **KNN** takes just `~0.02s` and **Decision Tree** takes `~3.7s`, making them ideal for rapid, daily retraining. While **Random Forest** provides unmatched robustness (AUC 0.978), it requires significantly more training time (`~12.2s`), introducing a trade-off between speed and capability.
+
+5. **Interpretability**: Decision Trees provide a "good enough" baseline while producing readable boolean rules, but sacrifice too much predictive power compared to the Random Forest ensemble.
 
 ### Most Important Features (from Decision Tree and SHAP)
 1. `unique_dst_computers_24h` — strongest indicator of lateral movement
@@ -155,18 +156,17 @@ THEN → Flag as Suspicious
 
 ## 5. Production Recommendation
 
-**Selected Model: Decision Tree (max_depth=7)**
+**Selected Model: Random Forest (n_estimators=100, max_depth=10)**
 
 | Criterion | Value | Why it matters |
 |-----------|-------|----------------|
-| F2-Score | 0.38 | Best balance of detection quality |
-| ROC AUC | 0.96 | Strong overall discrimination |
-| Train Time | <0.1s | Enables rapid retraining on new data |
-| Interpretability | High | Rules exportable to SIEM systems |
+| ROC AUC | 0.9786 | Best overall ability to rank threats above normal events |
+| Recall | 83.57% | Catches the vast majority of malicious behavior |
+| F2-Score | 0.1849 | Good baseline detection quality, highly tunable |
 
-**Alternative:** Logistic Regression — when maximizing Recall (catching every threat) is more important than reducing false alarms.
+**Alternative:** K-Nearest Neighbors (KNN) — Recommended if the SOC requires immediate out-of-the-box deployment with minimal false alarms (highest precision of 8.4%), and is willing to accept a lower recall (65%).
 
-**Not Recommended:** KNN — despite highest AUC, fails at actual detection (F2 = 0.18).
+**Not Recommended:** Logistic Regression / SVM — Despite catching nearly 88% of threats, their <1% precision means they would flood security analysts with over 100 false alarms for every real threat.
 
 ---
 
@@ -204,13 +204,11 @@ THEN → Flag as Suspicious
 
 This project demonstrates that machine learning can effectively detect anomalous authentication behavior in enterprise security logs. The key success factors were:
 
-1. **Feature Engineering**: Transforming raw logs into behavioral metrics (rolling counts, velocities, diversity measures) was more impactful than model selection.
+1. **Feature Engineering**: Transforming raw logs into behavioral metrics (rolling counts, velocities, diversity measures) was far more impactful than algorithm selection alone.
+2. **True Test Set Evaluation**: The extreme class imbalance (0.1%) makes cross-validation tricky when using over-sampling techniques like SMOTE. Evaluating strictly on a pristine test set revealed the true operational capabilities (Precision/Recall trade-off) of each model.
+3. **Dual-Metric Evaluation**: Using both ROC AUC and F2-Score highlighted that linear models catching 88% of threats were actually unusable due to <1% precision. The **Random Forest** emerged as the most robust ranking model (97.8% AUC), while **KNN** provided the best out-of-the-box F2-Score.
 
-2. **Dual-Metric Evaluation**: Using both ROC AUC and F2-Score revealed that high ranking ability (AUC) does not guarantee good detection (F2). This insight prevented selecting KNN, which would have failed in production.
-
-3. **Interpretability for Production**: The Decision Tree's ability to export human-readable rules bridges the gap between ML experimentation and deployable SIEM logic.
-
-The recommended Decision Tree model achieves a 0.96 ROC AUC and 0.38 F2-Score while training in under 0.1 seconds — enabling rapid adaptation to evolving attack patterns while providing actionable detection rules for security analysts.
+The recommended Random Forest model provides a robust foundation for automated threat detection, capable of discovering previously unseen patterns while providing the tunability needed to integrate into modern Security Operations Centers.
 
 ---
 

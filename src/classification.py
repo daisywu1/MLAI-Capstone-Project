@@ -153,7 +153,7 @@ def plot_roc_curves(models: dict, X_test, y_test):
 
 
 def plot_confusion_matrices(models: dict, X_test, y_test):
-    """Plot confusion matrices for multiple models side by side."""
+    """Plot confusion matrices for multiple models side by side and print scores."""
     n = len(models)
     fig, axes = plt.subplots(1, n, figsize=(6 * n, 5))
     if n == 1:
@@ -173,3 +173,7 @@ def plot_confusion_matrices(models: dict, X_test, y_test):
     plt.tight_layout()
     _save_fig('confusion_matrices')
     plt.show()
+
+    # Print classification reports with precision, recall, f1-score
+    for name, model in models.items():
+        print_classification_report(model, X_test, y_test, name)

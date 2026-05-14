@@ -47,7 +47,7 @@ The analysis pipeline implements the following techniques to address the problem
 | **Feature Engineering** | Engineered rolling-window behavioral features (counts, ratios, velocities) from raw logs to capture historical patterns without overfitting. |
 | **Data Balancing (SMOTE)** | Applied Synthetic Minority Over-sampling Technique (SMOTE) to the training set to synthesize rare red team events and address the extreme class imbalance before model training. |
 | **Time Series Analysis** | Decomposed hourly event volume to model temporal trends (seasonality) and detected sudden deviations via rolling z-scores. |
-| **Model Selection & Hyperparameter Tuning** | Compared models using `GridSearchCV` with 5-fold cross-validation. Tuned L1/L2 regularization for Logistic Regression, max depth for Decision Trees, and estimators for Random Forest to handle high-dimensional spaces and prevent overfitting. |
+| **Model Selection & Hyperparameter Tuning** | Compared models using `GridSearchCV` with 5-fold cross-validation. **Logistic Regression/SVM** tuned `C` to balance regularization against overfitting; **Decision Trees** tuned `max_depth` to balance interpretability vs complex patterns; **Random Forest** tuned `n_estimators` & `max_depth` to balance robustness against elapsed training time. |
 | **Baseline Comparison** | Established a performance floor using a DummyClassifier (stratified random guessing) to ensure all experimental models provide real predictive value. |
 | **Dual-Metric Evaluation** | Evaluated models using both **ROC AUC** (threshold-independent ranking) and **F2-Score** (threshold-dependent, Recall weighted 2x) to capture complementary views of model performance. |
 | **Classification (KNN, LR, RF, SVM, DT)** | Built and evaluated baseline and advanced classifiers across ROC AUC, F2-Score, Recall, Precision, and Training Time. |
@@ -63,39 +63,34 @@ In cybersecurity threat detection, no single metric tells the full story. I eval
 | **ROC AUC** | Overall ability to rank threats above normal events across *all* thresholds | Threshold-independent; unaffected by class imbalance | Does not reflect real-world operating performance at a specific decision threshold |
 | **F2-Score** | Detection quality at the default threshold, weighting **Recall 2x** over Precision (β=2) | Directly reflects production behavior; penalizes missed threats more than false alarms | Threshold-dependent; a single number for one operating point |
 
-Using both metrics reveals important insights. A model can have a high ROC AUC (good ranking ability) but a poor F2-Score (poor detection at the default threshold), which is exactly what happened with KNN. For production deployment decisions, **F2-Score is the primary guide** because it reflects actual detection performance.
-
-I evaluated seven classification approaches, including a **Baseline (Stratified DummyClassifier)** as the performance floor.
+I evaluated seven classification approaches, including a **Baseline (Stratified DummyClassifier)** as the performance floor. The metrics below represent the **true test set performance** to ensure no data leakage from the SMOTE balancing process.
 
 | Model | ROC AUC | F2-Score | Recall | Precision | Train Time | Notes |
 |-------|---------|----------|--------|-----------|------------|-------|
-| **Baseline (Stratified)** | ~0.50 | ~0.01 | ~0.50 | ~0.001 | <0.01s | Random guessing (performance floor) |
-| **K-Nearest Neighbors** | **0.9982** | ~0.18 | ~0.14 | ~0.50 | ~0.5s | Best AUC, but worst F2 — defaults to majority class |
-| **Random Forest** | 0.9818 | ~0.40 | ~0.80 | ~0.12 | ~2.0s | Robust ensemble |
-| **Logistic Regression (L2)** | 0.9660 | ~0.35 | ~0.88 | ~0.08 | ~0.2s | Highest Recall |
-| **Support Vector Machine** | 0.9651 | ~0.34 | ~0.87 | ~0.08 | ~1.5s | Similar to LR, slower |
-| **Decision Tree** | 0.9600 | **~0.38** | ~0.84 | ~0.10 | **<0.1s** | Best F2 + fastest + interpretable |
+| **Baseline (Stratified)** | ~0.50 | ~0.00 | ~0.50 | <0.01 | <0.01s | Random guessing (performance floor) |
+| **K-Nearest Neighbors** | 0.8462 | **0.2771** | 0.6500 | **0.0841** | **~0.02s** | Best out-of-box F2 & precision |
+| **Random Forest** | **0.9786** | 0.1849 | 0.8357 | 0.0449 | ~12.2s | Most robust (Best AUC, high Recall) |
+| **Logistic Regression** | 0.9522 | 0.0434 | **0.8786** | 0.0090 | ~0.8s | Highest Recall, but too many false alarms |
+| **Decision Tree** | 0.9275 | 0.1478 | 0.7214 | 0.0354 | ~3.7s | Good interpretable baseline |
+| **Support Vector Machine** | N/A | 0.0429 | 0.8786 | 0.0089 | ~1.1s | Similar to LR, slower |
 
-**Key observation**: KNN has the best ROC AUC (0.9982) but the worst F2-Score (~0.18). This demonstrates that a model can be excellent at *ranking* events but terrible at *detecting* threats at the operating threshold. This is why both metrics are essential.
+**Key observation**: Linear models (LR, SVM) achieved the highest Recall (~88%) but failed catastrophically on Precision (<1%), generating an unacceptable volume of false alarms. **KNN** achieved the best F2-Score out of the box by preserving Precision (8.4%), while **Random Forest** proved to be the most robust overall with the highest ROC AUC (97.8%) and a strong Recall (83.5%).
 
 ### Production Recommendation: The Best Model
-After analyzing the trade-off between ROC AUC, F2-Score, training efficiency, and interpretability, I recommend **Decision Tree** as the optimal model for production deployment.
+After analyzing the trade-off between ROC AUC, F2-Score, training efficiency, and interpretability, I recommend **Random Forest** as the optimal model for production deployment, provided its operating threshold is tuned.
 
 **Justification:**
-1. **Best F2-Score (~0.38)**: Achieves the best balance of catching threats while maintaining reasonable precision at the default threshold.
-2. **Strong ROC AUC (0.96)**: Confirms the model has excellent overall discrimination ability.
-3. **Fastest Training (<0.1s)**: Critical for adapting to evolving attack patterns via rapid retraining.
-4. **Interpretability**: Produces explicit boolean rules (e.g., `if unique_dst_computers_24h > X and hour < Y`) that can be directly implemented as SIEM alerts.
+1. **Best ROC AUC (0.978)**: Confirms the model has excellent overall discrimination ability between normal and suspicious events.
+2. **High Recall (83.5%)**: Safely catches the vast majority of threats.
+3. **Threshold Tunability**: While KNN has a better F2-Score *at the default threshold*, Random Forest's superior underlying ranking capability (AUC) means we can tune the decision threshold to easily match or exceed KNN's operational performance.
 
-**Alternative: Logistic Regression (L2)** — Offers the highest Recall (~88%) when minimizing missed threats is the absolute priority and the security team can handle more false alarms.
-
-**Why NOT KNN?** Despite the highest ROC AUC (0.9982), KNN has the worst F2-Score (~0.18) because it defaults to predicting "normal." AUC alone is misleading for imbalanced classification.
+**Alternative: KNN** — Offers the best out-of-the-box F2-Score (0.277) and Precision (8.4%) without tuning, minimizing false alarms while still catching 65% of threats.
 
 ### Key Takeaways
-1. **Use complementary metrics**: ROC AUC measures ranking quality; F2-Score measures detection quality. Both are needed.
-2. **Feature Engineering is King**: The success of this project was driven by engineering stateful, rolling-window behavioral features that captured user patterns.
-3. **Beware of misleading metrics**: KNN's high AUC was deceptive — it failed on F2-Score. Always evaluate on the metric that reflects your production objective.
-4. **Interpretability matters**: For production security systems, a Decision Tree's exportable rules are more valuable than a marginally better but opaque model.
+1. **SMOTE and Data Leakage**: It is critical to evaluate models on a pristine test set. Cross-validation on SMOTE-augmented data yields wildly optimistic scores; true test performance reveals the real operational capability.
+2. **Feature Engineering is King**: Behavioral features that capture rolling-window counts and velocities were the primary drivers of model performance.
+3. **Use Complementary Metrics**: High Recall is useless if Precision falls below 1% (generating 100+ false alarms per real threat). Evaluating both F2-Score and ROC AUC ensures models are both operationally viable and robust.
+4. **Training Elapsed Time**: The time it takes to train a model heavily impacts operations. While Random Forest takes ~12 seconds, simpler models like KNN (~0.02s) and Decision Trees (~3.7s) allow for rapid retraining on new data, providing faster response to emerging threats.
 
 ---
 
