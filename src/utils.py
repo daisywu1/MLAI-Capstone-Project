@@ -51,6 +51,8 @@ def prepare_train_test(df_features: pd.DataFrame, test_size=0.2, random_state=42
     if not use_stratify:
         print(f"  Warning: only {n_classes} class(es) with {n_positive} positive "
               f"samples — using non-stratified split.")
+    else:
+        print(f"  Using stratified split with {n_classes} classes and {n_positive} positive samples.")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state,
@@ -77,6 +79,6 @@ def prepare_train_test(df_features: pd.DataFrame, test_size=0.2, random_state=42
             X_train, y_train = smote.fit_resample(X_train, y_train)
             print(f"  After SMOTE: Train has {len(X_train):,} rows ({int(y_train.sum()):,} positive)")
         else:
-            print("  Warning: Not enough positive samples in train set for SMOTE. Skipping.")
+            print("  NO SMOTE: Warning: Not enough positive samples in train set for SMOTE. Skipping.")
 
     return X_train, X_test, y_train, y_test, scaler, feature_cols

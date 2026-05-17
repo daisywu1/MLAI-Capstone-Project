@@ -39,7 +39,7 @@ def compare_models(X_train: np.ndarray, y_train: np.ndarray,
     """
     warnings.filterwarnings('ignore')
     models = {
-        'Baseline (Stratified)': DummyClassifier(strategy='stratified', random_state=42),
+        'Baseline (Stratified, DummyClassifier)': DummyClassifier(strategy='stratified', random_state=42),
         'Logistic Regression (L2)': LogisticRegression(max_iter=1000, solver='lbfgs', random_state=42, class_weight='balanced'),
         'Logistic Regression (L1)': LogisticRegression(penalty='l1', max_iter=1000, solver='saga', random_state=42, class_weight='balanced'),
         'KNN (k=5)': KNeighborsClassifier(n_neighbors=5),

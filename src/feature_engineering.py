@@ -47,8 +47,8 @@ def _rolling_counts(df: pd.DataFrame, user_col: str, time_col: str,
 def build_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
     """Build the full feature matrix from cleaned authentication data.
 
-    This is the most compute-intensive step. For large datasets, consider
-    processing in chunks.
+    This is the most compute-intensive step. For large datasets, maybe we
+    should consider processing in chunks.
     """
     df = df.copy().sort_values('time').reset_index(drop=True)
 
